@@ -13,6 +13,12 @@ consumer, not the product.**
 
 Built for the KeeperHub **"Agents Onchain"** hackathon (DoraHacks).
 
+![Talos eval-layer console — live Base Sepolia settlements](docs/media/talos-dashboard-demo.gif)
+
+> The console (`web/dashboard.html`) makes the whole eval → attest → settle flow legible at a
+> glance: score-vs-threshold meters, the 90% < 95% graded-refund money shot, and every settle
+> linking to basescan.
+
 ---
 
 ## The one-liner that survives a hostile judge
@@ -120,6 +126,32 @@ cd keeper    && pnpm test         # 9: each evaluator scores correctly AND repro
 
 The `trustTier` enum reserves `Attested` and `Judged` (LLM/rubric) tiers for later, clearly
 labeled lower-trust; v1 registers only `Reproducible`.
+
+## Onboarding — zero to a live settlement
+
+Onboarding a KeeperHub agent has real friction (toolchain, funding, deploy, eval registration,
+wiring the workflow, the first settlement — and the `kh_` vs `wfb_` webhook-key trap). `talos
+onboard` walks every prerequisite as a self-healing checklist and prints the **exact next action**
+where something's missing:
+
+```bash
+cd keeper && pnpm onboard
+```
+
+```
+  TALOS · onboard   zero to a live onchain settlement
+  ✓  Node ≥ 20
+  ✓  Foundry (forge/anvil)
+  ✓  RPC reachable            http://127.0.0.1:8545 · chain 31337
+  ✓  Contracts deployed       escrow 0x…
+  ✓  Evals registered onchain 3 evals live
+  ◦  KeeperHub workflow wired  using settler-fallback actuator
+  ✓  First settlement landed  5 settlements in the audit trail
+  All green. Open the console: web/dashboard.html
+```
+
+Then the **console** (`web/dashboard.html`) — a self-contained, zero-dependency page — turns the
+onchain state into something a newcomer understands in 30 seconds.
 
 ## Deploy to Base Sepolia
 
