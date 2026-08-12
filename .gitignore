@@ -19,3 +19,4 @@ contracts/broadcast/
 .wallets.json
 keeper/.env.testnet
 keeper/.env
+keeper/.deploy.testnet.json

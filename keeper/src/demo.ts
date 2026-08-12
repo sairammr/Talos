@@ -22,6 +22,11 @@ import { log, color } from "./logger.js";
 
 const AMOUNT = BigInt(Math.round(Number(process.env.DEAL_USDC ?? 10) * 1e6));
 
+// Per-run nonce salt so re-runs against the same escrow don't collide (DealExists). Deterministic
+// dealIds are still one-per-deal; the salt just makes each demo run a fresh set.
+const RUN = process.env.RUN_TAG ?? Date.now().toString(36).slice(-6);
+const n = (base: string) => `${RUN}-${base}`;
+
 async function advanceTime(secs: number) {
   if (config.chainId !== 31337) {
     await new Promise((r) => setTimeout(r, (secs + 1) * 1000));
@@ -117,21 +122,21 @@ async function main() {
   const seller0 = await usdcBalance(accounts.seller.address);
 
   log.banner("reproduction — full-correct delivery reproduces → release");
-  await runDeal({ nonce: "repro-ok-1", evaluator: reproduction, input: reproInput(1), mode: { mode: "honest" } });
+  await runDeal({ nonce: n("repro-ok-1"), evaluator: reproduction, input: reproInput(1), mode: { mode: "honest" } });
 
   log.banner("fieldMatch — 97% correct clears the 95% bar → release (graded pass)");
-  await runDeal({ nonce: "field-pass-2", evaluator: fieldMatch, input: fieldInput(), mode: { mode: "degrade", param: 3 } });
+  await runDeal({ nonce: n("field-pass-2"), evaluator: fieldMatch, input: fieldInput(), mode: { mode: "degrade", param: 3 } });
 
   log.banner("fieldMatch — 90% correct misses the 95% bar → refund (the eval-layer money shot)");
-  await runDeal({ nonce: "field-fail-3", evaluator: fieldMatch, input: fieldInput(), mode: { mode: "degrade", param: 10 } });
+  await runDeal({ nonce: n("field-fail-3"), evaluator: fieldMatch, input: fieldInput(), mode: { mode: "degrade", param: 10 } });
 
   log.banner("reproduction — tampered delivery scores 0 → refund (fraud)");
-  await runDeal({ nonce: "repro-fraud-4", evaluator: reproduction, input: reproInput(4), mode: { mode: "fraud" } });
+  await runDeal({ nonce: n("repro-fraud-4"), evaluator: reproduction, input: reproInput(4), mode: { mode: "fraud" } });
 
   log.banner("Autonomous refund — deal expires, KeeperHub refunds from onchain state");
   const expireSecs = config.chainId === 31337 ? 2 : 30;
   await lockDeal({
-    nonce: "expire-5",
+    nonce: n("expire-5"),
     amount: AMOUNT,
     deadlineSecs: expireSecs,
     evalId: evalIdFor(reproduction),
@@ -141,6 +146,23 @@ async function main() {
   log.info("no delivery arrives; advancing past the deadline…");
   await advanceTime(expireSecs + 3);
   await tick(); // watcher sees isExpired() → autonomous refund
+
+  // On testnet, KeeperHub lands the verdict settlements asynchronously; reconcile local status
+  // from onchain (poll until no deal is still Held or a timeout).
+  if (config.chainId === 84532 && config.keeperhubWebhookUrl) {
+    log.info("waiting for KeeperHub to land async settlements…");
+    for (let i = 0; i < 20; i++) {
+      let anyHeld = false;
+      for (const rec of store.all()) {
+        const d = await readDeal(rec.dealId);
+        if (d.status === "Released") store.setStatus(rec.dealId, "released");
+        else if (d.status === "Refunded") store.setStatus(rec.dealId, "refunded");
+        else if (d.status === "Held") anyHeld = true;
+      }
+      if (!anyHeld) break;
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
 
   // --- Summary ---
   log.banner("Settlement summary");

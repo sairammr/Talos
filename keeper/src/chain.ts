@@ -186,8 +186,13 @@ export const attestedEvent = parseAbiItem(
   "event Attested(bytes32 indexed attId, address indexed evaluator, bytes32 indexed evalId, bytes32 deliverableHash, uint16 score)"
 );
 
-export async function readAttestations(fromBlock: bigint = 0n): Promise<AttestedEvent[]> {
+export async function readAttestations(fromBlock?: bigint): Promise<AttestedEvent[]> {
   const { attestationRegistry } = addresses();
+  // Public RPCs cap eth_getLogs at ~10k blocks; default to a recent window.
+  if (fromBlock === undefined) {
+    const latest = await publicClient.getBlockNumber();
+    fromBlock = latest > 9000n ? latest - 9000n : 0n;
+  }
   const logs = await publicClient.getLogs({
     address: attestationRegistry,
     event: attestedEvent,

@@ -1,13 +1,15 @@
-# Talos — Conditional Settlement Keeper
+# Talos — The Eval Layer for the Agent Economy
 
-> The bronze automaton that circled Crete, enforcing the law with no human hand. Talos is the
-> same idea for the agent economy: a machine guardian that weighs delivery and settles funds on
-> its own — releasing when work is *proven* correct, refunding itself when a deal expires.
+> The bronze automaton that circled Crete, weighing every visitor and enforcing the law with no
+> human hand. Talos is the same idea for the agent economy: a machine that grades agent work and
+> settles funds on its own — releasing when the work is *provably* correct, refunding when it
+> isn't, and never asking a human to press "pay."
 
-**The trust layer for the agent economy.** Agents pay each other over x402 — but the money only
-releases when the work is *provably* correct. An onchain escrow (`TalosEscrow`) holds the funds,
-a **deterministic verifier** reproduces the delivery to prove it, and a **KeeperHub** workflow
-fires the release-or-refund transaction. No human presses "pay." No human presses "refund."
+**Talos is a registry of reproducible evals that emit onchain-attested, graded verdicts about
+agent work.** An agent's deliverable is graded by a registered evaluator; the verdict (a **score**
++ independently-checkable evidence) is posted onchain as an **attestation**. Any consumer — an
+escrow, a marketplace, a reputation reader — acts on the attestation. **Settlement is the first
+consumer, not the product.**
 
 Built for the KeeperHub **"Agents Onchain"** hackathon (DoraHacks).
 
@@ -15,26 +17,36 @@ Built for the KeeperHub **"Agents Onchain"** hackathon (DoraHacks).
 
 ## The one-liner that survives a hostile judge
 
-> *"What stops the seller from fooling the verifier?"*
+> *"What stops the seller from fooling the evaluator?"*
 
-Nothing, if verification is an LLM plausibility check — an adversarial seller games it. So Talos
-settles **only the decidable class of jobs**: a delivery is `approved` **iff the verifier can
-independently reproduce it and byte-compare**. Correctness becomes a *pure function of the
-input* — anyone, including the buyer, can re-run the check and get the same verdict. That turns
-"trust layer" from a vibe into a **reproducibility guarantee**. (PRD §6a.)
+Nothing, if grading is an LLM plausibility check — an adversarial seller games it. So Talos grades
+only the **decidable class**: an eval is registered only when its verdict is **reproducible**. A
+verdict cites `evalId + version`; anyone resolves the registered `evaluatorCodeHash`, re-runs the
+evaluator on the same `inputHash`, and **must reproduce the score**. Correctness becomes a *pure
+function of the input* — and **reproducibility becomes an onchain property**, not a vibe.
 
-## Three pieces, clean separation of concerns
+Graded, not just pass/fail: a `fieldMatch` eval scores a delivery by the fraction of fields that
+reproduce. A 97%-correct delivery clears a 95% bar and releases; a 90%-correct one fails and
+refunds — **decided by the contract from the onchain score**.
 
-| Piece | What it does | Where |
+## Three onchain objects, clean separation
+
+| Object | What it is | Where |
 |---|---|---|
-| **Custody** | `TalosEscrow` holds USDC per deal. Only two terminal transitions: `release` → seller, `refund` → buyer. Single-settlement guard, permissionless deadline refund. | `contracts/src/TalosEscrow.sol` |
-| **Decision** | Independent **critic** re-runs the agreed transform and byte-compares. Verdict is the release gate. | `keeper/src/verifier.ts`, `keeper/src/job.ts` |
-| **Execution** | **KeeperHub** actuates `release`/`refund` via a workflow Web3 Action (smart gas, backoff, private routing, audit trail). | `keeper/src/keeperhub.ts`, `docs/keeperhub-workflow.md` |
+| **EvalRegistry** | Catalogue of reproducible evals: name/version, `evaluatorCodeHash`, `threshold` (bp), trust tier. | `contracts/src/EvalRegistry.sol` |
+| **AttestationRegistry** | Onchain graded verdicts: `attest(evalId, deliverableHash, inputHash, score, evidenceHash)`. Reputation reads off `Attested` events. | `contracts/src/AttestationRegistry.sol` |
+| **TalosEscrow** (a *consumer*) | A deal names an `evalId`. `settle(dealId, attId)` reads the attestation and — from the **onchain score vs the onchain threshold** — releases to the seller or refunds the buyer. | `contracts/src/TalosEscrow.sol` |
 
-**KeeperHub thinks vs acts, honestly:** the release verdict is computed off-chain (reproducibility
-can't be), so KeeperHub *actuates a proven verdict*. The **deadline refund is genuinely
-autonomous** — decided entirely inside KeeperHub from onchain state (`isExpired(dealId)`), no
-keeper input. That autonomous branch is the honest centerpiece of "KeeperHub acts."
+The release condition is onchain-checkable (attestation exists + `evalId` matches + `score ≥
+threshold`), not a keeper's bare bool. **The contract picks the branch, not the keeper.**
+
+## Where KeeperHub fits (thinks vs acts, honestly)
+
+The graded verdict is computed off-chain (reproducibility can't be onchain), so KeeperHub
+**actuates a proven verdict**: a webhook workflow signs `settle(dealId, attId)`. The **deadline
+refund is genuinely autonomous** — a KeeperHub Block-Interval workflow reads `isExpired(dealId)`
+from onchain state and refunds with *zero keeper input*. That autonomous branch is the honest
+centerpiece of "KeeperHub acts."
 
 ## Run it (zero credentials)
 
@@ -45,103 +57,97 @@ cd keeper && pnpm install && cd ..
 ./run.sh
 ```
 
-`run.sh` spins a local `anvil` chain, deploys `TalosEscrow` + a `MockUSDC` faucet, and runs the
-full lifecycle — **every leg a real onchain tx**:
+`run.sh` spins a local `anvil`, deploys the eval-layer stack + a `MockUSDC` faucet, starts the
+**seller as its own agent process**, and runs the full lifecycle — **every leg a real onchain tx**:
 
-- 3 happy-path deals: `lock` → x402 delivery → critic reproduces → **release** → seller paid
-- 1 fraud deal: tampered delivery → critic **rejects** → **refund** to buyer
-- 1 expiry deal: no delivery → **autonomous** block-interval refund from onchain state
+- `reproduction`, full-correct → score **10000** → **release**
+- `fieldMatch`, 97% correct → score **9700 ≥ 9500** → **release** (graded pass)
+- `fieldMatch`, 90% correct → score **9000 < 9500** → **refund** (graded fail — the money shot)
+- `reproduction`, tampered → score **0** → **refund** (fraud)
+- expiry, no delivery → **autonomous** block-interval refund
 
 ```
 ━━ Balances ━━
-  buyer  Δ -30.00 USDC
-  seller Δ 30.00 USDC   (3 releases = 30 USDC)
-━━ Audit trail ━━
-  5 settlement rows · 3 released · 2 refunded
+  buyer  Δ -20.40 USDC
+  seller Δ 20.40 USDC   (2 releases = 20 USDC + 5 x402 delivery fees = 0.50 USDC)
+━━ Reputation (from onchain Attested events) ━━
+  0x3C44…  4 attestations · mean score 71.8% · 2/4 passed
 ```
 
-Then inspect the trail (trigger → verdict → tx hash → gas → outcome, with the reproduced
-evidence hash on each row):
+Inspect the trail (eval → score → attestation → settle tx → outcome):
 
 ```bash
-cd keeper && pnpm audit    # or: pnpm deals
+cd keeper && pnpm audit          # or: pnpm deals  ·  npx tsx src/cli.ts reputation
 ```
 
 ## Tests
 
 ```bash
-cd contracts && forge test        # 22 tests: escrow guards, single-settlement, fuzz + EIP-3009 x402
-cd keeper    && pnpm test         # 5 tests: reproducibility predicate catches fraud, deterministically
+cd contracts && forge test        # 40: registries, score-gated settle, graded pass/fail, fuzz, EIP-3009
+cd keeper    && pnpm test         # 9: each evaluator scores correctly AND reproducibly
 ```
 
-## Architecture
+## The eval lifecycle
 
 ```
 ┌──────────────┐  x402 request/pay   ┌──────────────┐
-│ Buyer agent  │────────────────────▶│ Seller agent │  (x402 HTTP delivery endpoint)
-└──────┬───────┘  deliver + proof    └──────┬───────┘
-       │ lock(USDC)                         │ output + checksum
-       ▼                                    ▼
-┌──────────────────────┐          ┌────────────────────────┐
-│ TalosEscrow (Sepolia)│          │  Settlement Keeper      │
-│  lock/release/refund │◀─ reads ─│  watcher · idempotency  │
-│  + terminal guard    │          │  · verifier (critic)    │
-└──────────┬───────────┘          └──────┬──────────┬───────┘
-           │ release/refund tx           │ verify   │ actuate
-           │                             ▼          ▼
-           │                     ┌──────────────┐ ┌────────────────────────┐
-           └─────────────────────│ Critic       │ │ KeeperHub workflow      │
-             Web3 Action calls   │ (reproduce + │ │ Trigger→Condition→      │
-             release()/refund()  │  byte-cmp)   │ │ Web3 Action release/    │
-                                 └──────────────┘ │ refund · gas · routing  │
-                                                  │ · audit trail           │
-                                                  └────────────┬────────────┘
-                                                               ▼  onchain USDC settlement
+│ Buyer agent  │────────────────────▶│ Seller agent │  (separate process, x402 HTTP endpoint)
+└──────┬───────┘  deliver + input-ref └──────┬───────┘
+       │ lock(dealId, …, evalId)              │ delivery
+       ▼                                      ▼
+┌──────────────────────┐          ┌────────────────────────────┐
+│ EvalRegistry         │          │  Keeper / evaluator SDK     │
+│ AttestationRegistry  │◀─ attest─│  evaluate() → graded Verdict │
+│ TalosEscrow (consumer)│  (score) │  (reproduction/fieldMatch/…) │
+└──────────┬───────────┘          └──────┬──────────────────────┘
+           │ settle(dealId, attId)        │ POST {dealId, attId}
+           │  score ≥ threshold ? release ▼
+           │                     ┌────────────────────────────┐
+           └─────────────────────│ KeeperHub workflow          │
+             Web3 Action signs   │ webhook → settle(dealId,attId)│
+             settle() / refund()  │ block-interval → refund()    │
+                                  └────────────┬────────────────┘
+                                               ▼  onchain USDC settlement
 ```
+
+## Evaluators shipped (v1, all `reproducible`)
+
+| id | Score | Reproducible because |
+|---|---|---|
+| `reproduction` | binary 10000/0 — re-run the agreed transform, byte-compare the output hash | output is a pure function of input |
+| `fieldMatch` | **graded** — fraction of fields that reproduce (97/100 → 9700) | each field re-derived independently |
+| `signature` | binary — payload signed by a named oracle key (ECDSA verify) | signature verification is deterministic |
+
+The `trustTier` enum reserves `Attested` and `Judged` (LLM/rubric) tiers for later, clearly
+labeled lower-trust; v1 registers only `Reproducible`.
 
 ## Deploy to Base Sepolia
 
-Copy `.env.example` → `keeper/.env`, set `RPC_URL`, `CHAIN_ID=84532`, `USDC_ADDRESS`, and distinct
-funded keys, then:
-
-```bash
-RPC_URL=https://sepolia.base.org CHAIN_ID=84532 USDC_ADDRESS=0x<usdc> \
-  SETTLER_ADDR=0x<keeperhub-signer> ./run.sh
-```
-
-Wire the two KeeperHub workflows per **`docs/keeperhub-workflow.md`**, set `KEEPERHUB_WEBHOOK_URL`,
-and settlement legs actuate through KeeperHub instead of the settler-fallback path.
-
-## Reliability guarantees (PRD §7)
-
-- **Reproducible release gate** — no `release` without the deterministic predicate passing.
-- **Contract single-settlement** — `release`/`refund` require `status == Held`, set terminal status atomically. Even a buggy keeper cannot double-pay.
-- **Idempotent keeper** — guards on a local flag *and* re-reads onchain status before actuating.
-- **Timeout safety net** — permissionless refund after the deadline; funds are never stuck.
-- **Retry/backoff** — settlement tx retries with backoff (KeeperHub smart-gas on the hosted path).
-- **Observability** — every decision + verdict + tx hash + gas + outcome in the audit trail.
+See **[`TESTNET.md`](./TESTNET.md)** — real Circle USDC, settlement fired through real KeeperHub
+workflows (`settle(dealId, attId)` webhook + autonomous block-interval refund). Live results with
+onchain tx links: **[`docs/keeperhub-testnet-results.md`](./docs/keeperhub-testnet-results.md)**.
 
 ## Layout
 
 ```
-contracts/        Foundry: TalosEscrow, MockUSDC, tests, deploy script
+contracts/        Foundry: EvalRegistry, AttestationRegistry, TalosEscrow (consumer), MockUSDC, tests
 keeper/src/
-  job.ts          deterministic transforms (the decidable job class)
-  verifier.ts     critic — the reproducibility release gate
+  evaluators/     the Evaluator SDK — reproduction, fieldMatch (graded), signature, registry
+  attest.ts       register evals onchain · evaluate → attest → attId
+  keeperhub.ts    actuation: settle(dealId, attId) via workflow webhook · settler-fallback
+  watcher.ts      idempotent settle-intent loop + autonomous deadline refund
+  agents/         buyer (lock with evalId), seller (standalone x402 delivery, per-eval modes)
   adapters/       x402 delivery adapter (EIP-3009 auth, settled onchain — real USDC moves)
-  agents/         buyer (lock), seller (x402 delivery, honest/fraud modes)
-  keeperhub.ts    actuation: workflow webhook  ·  settler-fallback
-  watcher.ts      idempotent settlement loop
-  demo.ts         the end-to-end run
-  cli.ts          audit view
-docs/keeperhub-workflow.md   the two workflow graphs + Hour-1 blocker
-run.sh            one-command demo
+  demo.ts         the end-to-end run   ·   cli.ts   audit / deals / reputation views
+docs/superpowers/specs/  the eval-layer design spec
+run.sh            one-command demo (two agent processes)
 ```
 
 ## Scope
 
-**Shipped (MVP + target):** escrow contract on-chain, x402 delivery adapter, independent
-deterministic critic, idempotent watcher, KeeperHub actuation (webhook + fallback), autonomous
-deadline refund, looped multi-deal flow, live fraud→refund, audit trail. **Out of scope:**
-multi-party/milestone splits, arbitration beyond critic+timeout, extra condition adapters (the
-`checkCondition` interface is built for pluggability; only the x402 adapter ships).
+**Shipped:** EvalRegistry + AttestationRegistry + score-gated escrow onchain; evaluator SDK with a
+graded evaluator; register→lock→x402→evaluate→attest→settle lifecycle; autonomous deadline refund;
+reputation from `Attested` events; two-agent-process demo; live fraud/graded-fail refunds; KeeperHub
+actuation. **Out of scope (schema leaves room):** `Attested`/`Judged` trust tiers, evaluator
+staking/slashing, sandboxed `testExec` evaluator, EAS mirror, deliverable-hash re-delivery nonce.
+```

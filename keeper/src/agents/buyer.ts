@@ -1,7 +1,7 @@
 // Buyer agent — funds the escrow. approve(escrow) then lock(dealId,...).
 // The locked USDC IS the payment (PRD §6a): no separate x402 double-pay.
 import { keccak256, stringToHex, type Hash, type Hex } from "viem";
-import { wallet, publicClient, addresses, escrowAbi, usdcAbi, accounts, waitReceipt, fmtUsdc } from "../chain.js";
+import { wallet, publicClient, addresses, escrowAbi, usdcAbi, accounts, waitReceipt, fmtUsdc, readDeal } from "../chain.js";
 import { config } from "../config.js";
 import { store } from "../store.js";
 import { log } from "../logger.js";
@@ -48,21 +48,34 @@ export async function lockDeal(opts: {
   evalId: Hex;
   evalName: string;
   input: unknown;
-}): Promise<{ dealId: Hash; lockTx: Hash }> {
+}): Promise<{ dealId: Hash; lockTx?: Hash }> {
   const { escrow } = addresses();
   const buyer = wallet(config.buyerKey);
   const dealId = dealIdOf(opts.nonce);
   const deadline = BigInt(Math.floor(Date.now() / 1000) + opts.deadlineSecs);
 
-  const lockTx = await buyer.writeContract({
-    address: escrow,
-    abi: escrowAbi,
-    functionName: "lock",
-    args: [dealId, accounts.seller.address, opts.amount, deadline, opts.evalId],
-  });
-  const receipt = await waitReceipt(lockTx);
+  // Public RPCs occasionally drop a rapid tx; send, confirm the deal is Held onchain, retry if
+  // it didn't land. A duplicate that reverts DealExists is fine — we detect the deal is Held.
+  let lockTx: Hash | undefined;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      lockTx = await buyer.writeContract({
+        address: escrow,
+        abi: escrowAbi,
+        functionName: "lock",
+        args: [dealId, accounts.seller.address, opts.amount, deadline, opts.evalId],
+      });
+      const receipt = await waitReceipt(lockTx);
+      if (receipt.status === "success") break;
+    } catch {
+      /* likely DealExists on a duplicate, or a transient RPC error — check onchain below */
+    }
+    if ((await readDeal(dealId)).status === "Held") break; // a prior attempt landed
+    if (attempt === 3) throw new Error(`lock did not land for ${dealId} after 3 attempts`);
+    await new Promise((r) => setTimeout(r, 800 * attempt));
+  }
   log.buyer(
-    `lock ${dealId.slice(0, 10)}… ${fmtUsdc(opts.amount)} held (eval ${opts.evalName})  \x1b[2mtx ${lockTx.slice(0, 12)}… gas ${receipt.gasUsed}\x1b[0m`
+    `lock ${dealId.slice(0, 10)}… ${fmtUsdc(opts.amount)} held (eval ${opts.evalName})  \x1b[2mtx ${lockTx?.slice(0, 12) ?? "—"}…\x1b[0m`
   );
 
   store.upsert({

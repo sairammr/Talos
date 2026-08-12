@@ -48,14 +48,13 @@ Your API key can *call* workflows but not *create* them (creation is UI/OAuth on
 escrow (deploy first if you want the address — Step 3 — then come back, or build with a
 placeholder and edit the address).
 
-**Workflow A — `talos-settle` (webhook → release/refund):**
+**Workflow A — `talos-settle` (webhook → settle):** the eval layer moves the decision onchain, so
+the workflow is a single write; the *contract* branches on the attested score vs the eval threshold.
 ```
-Trigger:   Webhook           body params: { dealId: string, action: string }
-Condition: action == "release"                     → branch A
-           action == "refund"                      → branch B
-Action A:  Web3 write  <escrow>.release(bytes32 dealId)   on Base Sepolia
-Action B:  Web3 write  <escrow>.refund(bytes32 dealId)    on Base Sepolia
+Trigger:   Webhook           body params: { dealId: string, attId: string }
+Action:    Web3 write  <escrow>.settle(bytes32 dealId, bytes32 attId)   on Base Sepolia
 ```
+(The keeper registers evals + posts the graded attestation onchain before firing this webhook.)
 - Copy the **Web3 Action signer address** (the Turnkey wallet) → this is `KEEPERHUB_SIGNER`.
 - Copy the workflow **call URL** → `https://app.keeperhub.com/api/mcp/workflows/<slug>/call`.
 
