@@ -6,6 +6,7 @@
   "description": "Talos settlement keeper — conditional escrow watcher, deterministic verifier, KeeperHub actuation.",
   "scripts": {
     "seller": "tsx src/agents/seller.ts",
+    "onboard": "tsx src/onboard.ts",
     "demo": "tsx src/demo.ts",
     "audit": "tsx src/cli.ts audit",
     "deals": "tsx src/cli.ts deals",

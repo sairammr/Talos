@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Talos — Eval Layer Console</title>
+<style>
+  :root {
+    --ground: #0d1411; --panel: #151f1b; --panel-2: #1b2723; --line: #26332e;
+    --ink: #e9ede9; --muted: #93a49c; --faint: #5f6f68;
+    --accent: #c9a24b;               /* bronze — Talos */
+    --pass: #57b87a; --refund: #d7a13f; --fail: #e0685a;
+    --track: #21302b;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --ground: #eef1ed; --panel: #ffffff; --panel-2: #f6f8f5; --line: #dde3dd;
+      --ink: #17211d; --muted: #5c6e67; --faint: #93a49c;
+      --accent: #9a781f; --pass: #2f9d5b; --refund: #b57e17; --fail: #c94f3f;
+      --track: #e6ebe5;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0d1411; --panel: #151f1b; --panel-2: #1b2723; --line: #26332e;
+    --ink: #e9ede9; --muted: #93a49c; --faint: #5f6f68;
+    --accent: #c9a24b; --pass: #57b87a; --refund: #d7a13f; --fail: #e0685a; --track: #21302b;
+  }
+  :root[data-theme="light"] {
+    --ground: #eef1ed; --panel: #ffffff; --panel-2: #f6f8f5; --line: #dde3dd;
+    --ink: #17211d; --muted: #5c6e67; --faint: #93a49c;
+    --accent: #9a781f; --pass: #2f9d5b; --refund: #b57e17; --fail: #c94f3f; --track: #e6ebe5;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--ground); color: var(--ink);
+    font-family: var(--sans); line-height: 1.5;
+    font-feature-settings: "kern";
+    background-image: radial-gradient(1200px 600px at 80% -10%, color-mix(in oklab, var(--accent) 10%, transparent), transparent 70%);
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: clamp(20px, 4vw, 56px) clamp(16px, 4vw, 40px) 80px; }
+  a { color: inherit; }
+  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  /* ---- header ---- */
+  header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 20px; }
+  .wordmark { display: flex; align-items: center; gap: 14px; }
+  .glyph { width: 42px; height: 42px; flex: none; }
+  .title { font-family: var(--serif); font-size: clamp(30px, 5vw, 46px); letter-spacing: 0.02em; font-weight: 600; margin: 0; line-height: 1; }
+  .tagline { color: var(--muted); margin: 6px 0 0; font-size: 15px; max-width: 46ch; text-wrap: balance; }
+  .status { display: flex; gap: 8px; flex-wrap: wrap; }
+  .pill { font-family: var(--mono); font-size: 12px; letter-spacing: 0.03em; padding: 5px 10px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--pass); box-shadow: 0 0 0 3px color-mix(in oklab, var(--pass) 25%, transparent); }
+
+  .lede { margin: 28px 0 0; font-family: var(--serif); font-size: clamp(19px, 2.4vw, 25px); line-height: 1.4; text-wrap: balance; max-width: 30ch; }
+  .lede b { color: var(--accent); font-weight: 600; }
+  .lede + .sub { color: var(--muted); margin-top: 10px; max-width: 62ch; }
+
+  section { margin-top: 44px; }
+  .eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); margin: 0 0 14px; }
+
+  /* ---- pipeline ---- */
+  .pipe { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+  .step { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 13px 12px; position: relative; }
+  .step .n { font-family: var(--mono); font-size: 11px; color: var(--accent); }
+  .step .k { font-weight: 600; margin-top: 4px; font-size: 14px; }
+  .step .d { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .step.keeper { border-color: color-mix(in oklab, var(--accent) 45%, var(--line)); }
+  .step .kh { font-family: var(--mono); font-size: 10px; color: var(--accent); margin-top: 7px; letter-spacing: 0.02em; }
+  @media (max-width: 780px) { .pipe { grid-template-columns: repeat(2, 1fr); } }
+
+  /* ---- contracts ---- */
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  @media (max-width: 780px) { .cards { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 16px 14px; }
+  .card h3 { font-family: var(--serif); font-size: 17px; margin: 0; font-weight: 600; }
+  .card p { color: var(--muted); font-size: 13px; margin: 4px 0 12px; }
+  .addr { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12.5px; color: var(--ink);
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; text-decoration: none; transition: border-color .15s; }
+  .addr:hover { border-color: var(--accent); }
+  .addr .ext { margin-left: auto; color: var(--faint); }
+
+  /* ---- evals ---- */
+  .evals { display: flex; flex-wrap: wrap; gap: 10px; }
+  .eval { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; display: flex; align-items: baseline; gap: 10px; }
+  .eval .name { font-weight: 600; }
+  .eval .thr { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+  .eval .tier { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); }
+
+  /* ---- settlements table ---- */
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+  table { border-collapse: collapse; width: 100%; min-width: 720px; }
+  thead th { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint);
+    text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--line); font-weight: 500; }
+  tbody td { padding: 14px 16px; border-bottom: 1px solid var(--line); vertical-align: middle; font-size: 14px; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr.money { background: color-mix(in oklab, var(--fail) 8%, transparent); }
+  .deal { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+  .evalcell { font-weight: 600; }
+  .evalcell small { display: block; font-weight: 400; color: var(--muted); font-family: var(--mono); font-size: 11px; }
+
+  /* score meter */
+  .meter { width: 190px; }
+  .meter .bar { position: relative; height: 9px; border-radius: 6px; background: var(--track); overflow: visible; }
+  .meter .fill { height: 100%; border-radius: 6px; transform-origin: left; }
+  .meter .tick { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--ink); opacity: .55; }
+  .meter .tick::after { content: "thr"; position: absolute; top: -15px; left: 50%; transform: translateX(-50%);
+    font-family: var(--mono); font-size: 9px; color: var(--faint); }
+  .meter .val { font-family: var(--mono); font-size: 12px; margin-top: 7px; display: flex; justify-content: space-between; color: var(--muted); }
+  .meter .val b { color: var(--ink); }
+
+  .outcome { font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; padding: 4px 9px; border-radius: 6px; white-space: nowrap; display: inline-block; }
+  .out-release { color: var(--pass); background: color-mix(in oklab, var(--pass) 14%, transparent); }
+  .out-refund { color: var(--refund); background: color-mix(in oklab, var(--refund) 15%, transparent); }
+  .out-fail { color: var(--fail); background: color-mix(in oklab, var(--fail) 15%, transparent); }
+  .tx { font-family: var(--mono); font-size: 12px; color: var(--muted); text-decoration: none; border-bottom: 1px dotted var(--faint); }
+  .tx:hover { color: var(--accent); border-color: var(--accent); }
+
+  /* ---- reputation + stats ---- */
+  .grid2 { display: grid; grid-template-columns: 1.3fr 1fr; gap: 12px; }
+  @media (max-width: 780px) { .grid2 { grid-template-columns: 1fr; } }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .stat .big { font-family: var(--serif); font-size: 34px; font-weight: 600; }
+  .stat .lab { color: var(--muted); font-size: 13px; }
+  .repline { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .repline:last-child { border-bottom: 0; }
+  .repline .who { font-family: var(--mono); font-size: 12.5px; }
+  .repline .rbar { flex: 1; height: 8px; border-radius: 5px; background: var(--track); overflow: hidden; }
+  .repline .rfill { height: 100%; background: var(--accent); }
+
+  footer { margin-top: 52px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--faint); font-size: 12.5px;
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+  footer .mono { color: var(--muted); }
+
+  .reveal { opacity: 0; transform: translateY(8px); animation: rise .6s cubic-bezier(.2,.7,.2,1) forwards; }
+  @keyframes rise { to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .reveal { animation: none; opacity: 1; transform: none; } .fill { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="reveal">
+    <div class="wordmark">
+      <svg class="glyph" viewBox="0 0 42 42" fill="none" aria-hidden="true">
+        <circle cx="21" cy="21" r="19" stroke="var(--accent)" stroke-width="1.5"/>
+        <circle cx="21" cy="21" r="12" stroke="var(--accent)" stroke-width="1.5" opacity="0.5"/>
+        <circle cx="21" cy="21" r="3.4" fill="var(--accent)"/>
+        <path d="M21 2 V9 M21 33 V40 M2 21 H9 M33 21 H40" stroke="var(--accent)" stroke-width="1.5"/>
+      </svg>
+      <div>
+        <h1 class="title">TALOS</h1>
+        <p class="tagline">The eval layer for the agent economy — reproducible, onchain-attested, graded verdicts about agent work.</p>
+      </div>
+    </div>
+    <div class="status">
+      <span class="pill"><span class="dot"></span>live · Base Sepolia</span>
+      <span class="pill">settled through KeeperHub</span>
+    </div>
+  </header>
+
+  <p class="lede reveal" style="animation-delay:.05s">A delivery is graded by a <b>reproducible eval</b>; the score is attested onchain; the escrow releases or refunds from that score. <b>Settlement is the first consumer, not the product.</b></p>
+
+  <section class="reveal" style="animation-delay:.1s">
+    <p class="eyebrow">The lifecycle — one deal, end to end</p>
+    <div class="pipe">
+      <div class="step"><div class="n">01</div><div class="k">Register eval</div><div class="d">code hash + threshold onchain</div></div>
+      <div class="step"><div class="n">02</div><div class="k">Lock</div><div class="d">buyer escrows USDC, names evalId</div></div>
+      <div class="step"><div class="n">03</div><div class="k">Deliver</div><div class="d">seller agent over x402</div></div>
+      <div class="step"><div class="n">04</div><div class="k">Evaluate</div><div class="d">re-run → graded score</div></div>
+      <div class="step"><div class="n">05</div><div class="k">Attest</div><div class="d">score posted onchain</div></div>
+      <div class="step keeper"><div class="n">06</div><div class="k">Settle</div><div class="d">contract decides from score</div><div class="kh">▸ KeeperHub actuates</div></div>
+    </div>
+  </section>
+
+  <section class="reveal" style="animation-delay:.15s">
+    <p class="eyebrow">Onchain — Base Sepolia (84532)</p>
+    <div class="cards">
+      <a class="card" href="https://sepolia.basescan.org/address/0xDD8076334e66d5041DFe3Ab9C14Ee2E1ED4dfb47" target="_blank" rel="noopener" style="text-decoration:none">
+        <h3>EvalRegistry</h3><p>Catalogue of reproducible evals + thresholds.</p>
+        <span class="addr mono">0xDD80…fb47 <span class="ext">basescan ↗</span></span>
+      </a>
+      <a class="card" href="https://sepolia.basescan.org/address/0x8C672E44452F4e6522Fe47c63c3bD29e818335e8" target="_blank" rel="noopener" style="text-decoration:none">
+        <h3>AttestationRegistry</h3><p>Onchain graded verdicts. Reputation reads off events.</p>
+        <span class="addr mono">0x8C67…35e8 <span class="ext">basescan ↗</span></span>
+      </a>
+      <a class="card" href="https://sepolia.basescan.org/address/0xC6b6Baa7A80ec471e81F0680BC599A3041410719" target="_blank" rel="noopener" style="text-decoration:none">
+        <h3>TalosEscrow <small style="color:var(--accent);font-family:var(--mono);font-size:11px"> consumer</small></h3><p><code class="mono" style="font-size:12px">settle(dealId, attId)</code> — releases iff score ≥ threshold.</p>
+        <span class="addr mono">0xC6b6…0719 <span class="ext">basescan ↗</span></span>
+      </a>
+    </div>
+  </section>
+
+  <section class="reveal" style="animation-delay:.2s">
+    <p class="eyebrow">Registered evals — all reproducible (v1)</p>
+    <div class="evals">
+      <div class="eval"><span class="name">reproduction</span><span class="thr">≥ 100%</span><span class="tier">binary</span></div>
+      <div class="eval"><span class="name">fieldMatch</span><span class="thr">≥ 95%</span><span class="tier">graded</span></div>
+      <div class="eval"><span class="name">signature</span><span class="thr">≥ 100%</span><span class="tier">binary</span></div>
+    </div>
+  </section>
+
+  <section class="reveal" style="animation-delay:.25s">
+    <p class="eyebrow">Settlements — every score attested onchain, every settle a real tx</p>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>Deal</th><th>Eval</th><th style="width:210px">Score vs threshold</th><th>Outcome</th><th>settle tx (KeeperHub)</th></tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="reveal" style="animation-delay:.3s">
+    <div class="grid2">
+      <div class="stat">
+        <p class="eyebrow" style="margin-bottom:14px">Reputation — from onchain Attested events</p>
+        <div id="rep"></div>
+      </div>
+      <div class="stat">
+        <div class="big" style="color:var(--fail)">90% &lt; 95%</div>
+        <div class="lab">The money shot: a 90%-correct delivery misses the bar and is <b style="color:var(--fail)">refunded</b> — decided by the contract from the onchain score, not a keeper's opinion.</div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="reveal" style="animation-delay:.35s">
+    <span>Talos · eval layer for the agent economy · <span class="mono">github.com/sairammr/Talos</span></span>
+    <span class="mono">./run.sh — zero credentials, every leg onchain</span>
+  </footer>
+</div>
+
+<script>
+  const SETTLEMENTS = [
+    { deal: "repro · honest",  eval: "reproduction", sub: "re-run + byte-compare", score: 100, thr: 100, outcome: "release", tx: "0xb968c330be47594132b73adcabc861304c5365bd8eaa99e4330bc7661c3c1cb6" },
+    { deal: "field · 97%",     eval: "fieldMatch",   sub: "97/100 fields reproduce", score: 97, thr: 95, outcome: "release", tx: "0x95f01ea4c44c5340c5f2d9645585462962923ba8536ea81203f3daf43d18141f" },
+    { deal: "field · 90%",     eval: "fieldMatch",   sub: "90/100 fields reproduce", score: 90, thr: 95, outcome: "refund", money: true, tx: "0xd1d526d07cab7416c5c93e6c40548c3d0d5780f21027dbaf8b139bbe32f8ba5a" },
+    { deal: "repro · tampered", eval: "reproduction", sub: "checksum mismatch", score: 0, thr: 100, outcome: "refund", tx: "0xc9e288fcb73205d88a1de3839a19d3e30330a5178e1974a76e89a7677060b20d" },
+    { deal: "expiry · no work", eval: "—", sub: "isExpired → autonomous", score: null, thr: null, outcome: "autonomous", tx: "0x87c31a872cd7d626967f874d605199fa6af6dde7d8fd89cb491ed8c3b3b22d03" },
+  ];
+  const REP = [{ who: "seller 0x60E3…8f22", mean: 71.8, pass: 4, n: 8 }];
+
+  const short = (h) => h.slice(0, 10) + "…" + h.slice(-6);
+  const rows = document.getElementById("rows");
+  SETTLEMENTS.forEach((s, i) => {
+    const pass = s.score !== null && s.score >= s.thr;
+    const col = s.outcome === "release" ? "var(--pass)" : s.outcome === "autonomous" ? "var(--refund)" : "var(--fail)";
+    const outClass = s.outcome === "release" ? "out-release" : s.outcome === "autonomous" ? "out-refund" : "out-fail";
+    const outLabel = s.outcome === "autonomous" ? "auto refund" : s.outcome;
+    const meter = s.score === null
+      ? `<div class="meter"><div class="val" style="justify-content:flex-start"><span>deadline · onchain state</span></div></div>`
+      : `<div class="meter">
+           <div class="bar">
+             <div class="fill" data-w="${s.score}" style="width:0;background:${pass ? 'var(--pass)' : 'var(--fail)'}"></div>
+             <div class="tick" style="left:${s.thr}%"></div>
+           </div>
+           <div class="val"><b>${s.score}%</b><span>thr ${s.thr}%</span></div>
+         </div>`;
+    const tr = document.createElement("tr");
+    if (s.money) tr.className = "money";
+    tr.innerHTML = `
+      <td class="deal">${s.deal}</td>
+      <td class="evalcell">${s.eval}<small>${s.sub}</small></td>
+      <td>${meter}</td>
+      <td><span class="outcome ${outClass}">${outLabel}</span></td>
+      <td><a class="tx" href="https://sepolia.basescan.org/tx/${s.tx}" target="_blank" rel="noopener">${short(s.tx)}</a></td>`;
+    rows.appendChild(tr);
+  });
+
+  const rep = document.getElementById("rep");
+  REP.forEach((r) => {
+    const el = document.createElement("div");
+    el.className = "repline";
+    el.innerHTML = `<span class="who">${r.who}</span>
+      <span class="rbar"><span class="rfill" style="width:${r.mean}%"></span></span>
+      <span class="mono" style="font-size:12.5px;white-space:nowrap">${r.mean}% · ${r.pass}/${r.n} passed</span>`;
+    rep.appendChild(el);
+  });
+
+  // animate meter fills
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  requestAnimationFrame(() => {
+    document.querySelectorAll(".fill").forEach((f, i) => {
+      const w = f.getAttribute("data-w") + "%";
+      if (reduce) { f.style.width = w; return; }
+      f.style.transition = "width .9s cubic-bezier(.2,.7,.2,1)";
+      setTimeout(() => (f.style.width = w), 250 + i * 120);
+    });
+  });
+</script>
+</body>
+</html>
