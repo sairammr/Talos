@@ -4,9 +4,13 @@ pragma solidity ^0.8.24;
 import {Script, console2} from "forge-std/Script.sol";
 import {TalosEscrow} from "../src/TalosEscrow.sol";
 import {MockUSDC} from "../src/MockUSDC.sol";
+import {EvalRegistry} from "../src/EvalRegistry.sol";
+import {AttestationRegistry} from "../src/AttestationRegistry.sol";
 import {IERC20} from "openzeppelin-contracts/token/ERC20/IERC20.sol";
 
-/// @notice Deploys MockUSDC (if USDC_ADDRESS unset) + TalosEscrow.
+/// @notice Deploys the eval-layer stack: EvalRegistry + AttestationRegistry + TalosEscrow
+///         (a consumer of attested verdicts) + MockUSDC (if USDC_ADDRESS unset).
+///         The keeper registers evals and posts attestations at runtime.
 /// Env:
 ///   PRIVATE_KEY   deployer key
 ///   SETTLER       settler address (KeeperHub signer). Defaults to deployer.
@@ -27,7 +31,12 @@ contract Deploy is Script {
             console2.log("MockUSDC:", usdcAddr);
         }
 
-        TalosEscrow escrow = new TalosEscrow(IERC20(usdcAddr), settler);
+        EvalRegistry evalRegistry = new EvalRegistry();
+        AttestationRegistry attestationRegistry = new AttestationRegistry(evalRegistry);
+        TalosEscrow escrow = new TalosEscrow(IERC20(usdcAddr), settler, evalRegistry, attestationRegistry);
+
+        console2.log("EvalRegistry:", address(evalRegistry));
+        console2.log("AttestationRegistry:", address(attestationRegistry));
         console2.log("TalosEscrow:", address(escrow));
         console2.log("USDC:", usdcAddr);
         console2.log("Settler:", settler);
