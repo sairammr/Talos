@@ -1,10 +1,9 @@
 // Buyer agent — funds the escrow. approve(escrow) then lock(dealId,...).
 // The locked USDC IS the payment (PRD §6a): no separate x402 double-pay.
-import { keccak256, stringToHex, type Hash } from "viem";
+import { keccak256, stringToHex, type Hash, type Hex } from "viem";
 import { wallet, publicClient, addresses, escrowAbi, usdcAbi, accounts, waitReceipt, fmtUsdc } from "../chain.js";
 import { config } from "../config.js";
 import { store } from "../store.js";
-import type { JobSpec } from "../job.js";
 import { log } from "../logger.js";
 
 export function dealIdOf(nonce: string): Hash {
@@ -46,7 +45,9 @@ export async function lockDeal(opts: {
   nonce: string;
   amount: bigint;
   deadlineSecs: number;
-  spec: JobSpec;
+  evalId: Hex;
+  evalName: string;
+  input: unknown;
 }): Promise<{ dealId: Hash; lockTx: Hash }> {
   const { escrow } = addresses();
   const buyer = wallet(config.buyerKey);
@@ -57,11 +58,11 @@ export async function lockDeal(opts: {
     address: escrow,
     abi: escrowAbi,
     functionName: "lock",
-    args: [dealId, accounts.seller.address, opts.amount, deadline],
+    args: [dealId, accounts.seller.address, opts.amount, deadline, opts.evalId],
   });
   const receipt = await waitReceipt(lockTx);
   log.buyer(
-    `lock ${dealId.slice(0, 10)}… ${fmtUsdc(opts.amount)} held  \x1b[2mtx ${lockTx.slice(0, 12)}… gas ${receipt.gasUsed}\x1b[0m`
+    `lock ${dealId.slice(0, 10)}… ${fmtUsdc(opts.amount)} held (eval ${opts.evalName})  \x1b[2mtx ${lockTx.slice(0, 12)}… gas ${receipt.gasUsed}\x1b[0m`
   );
 
   store.upsert({
@@ -70,7 +71,9 @@ export async function lockDeal(opts: {
     seller: accounts.seller.address,
     amount: opts.amount.toString(),
     deadline: Number(deadline),
-    spec: opts.spec,
+    evalName: opts.evalName,
+    evalId: opts.evalId,
+    input: opts.input,
     status: "held",
     lockTx,
     createdAt: Date.now(),

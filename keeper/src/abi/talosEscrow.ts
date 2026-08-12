@@ -1,3 +1,4 @@
+// Auto-generated from contracts/out/TalosEscrow.sol — do not edit by hand.
 export const talosEscrowAbi = [
   {
     "type": "constructor",
@@ -11,9 +12,32 @@ export const talosEscrowAbi = [
         "name": "_settler",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "_evalRegistry",
+        "type": "address",
+        "internalType": "contract EvalRegistry"
+      },
+      {
+        "name": "_attestationRegistry",
+        "type": "address",
+        "internalType": "contract AttestationRegistry"
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "attestationRegistry",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract AttestationRegistry"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -47,9 +71,27 @@ export const talosEscrowAbi = [
         "internalType": "uint64"
       },
       {
+        "name": "evalId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
         "name": "status",
         "type": "uint8",
         "internalType": "enum TalosEscrow.Status"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "evalRegistry",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract EvalRegistry"
       }
     ],
     "stateMutability": "view"
@@ -84,6 +126,11 @@ export const talosEscrowAbi = [
         "name": "deadline",
         "type": "uint64",
         "internalType": "uint64"
+      },
+      {
+        "name": "evalId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       },
       {
         "name": "status",
@@ -135,6 +182,11 @@ export const talosEscrowAbi = [
         "name": "deadline",
         "type": "uint64",
         "internalType": "uint64"
+      },
+      {
+        "name": "evalId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [],
@@ -168,12 +220,12 @@ export const talosEscrowAbi = [
   },
   {
     "type": "function",
-    "name": "release",
+    "name": "setSettler",
     "inputs": [
       {
-        "name": "id",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "name": "_settler",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -181,12 +233,17 @@ export const talosEscrowAbi = [
   },
   {
     "type": "function",
-    "name": "setSettler",
+    "name": "settle",
     "inputs": [
       {
-        "name": "_settler",
-        "type": "address",
-        "internalType": "address"
+        "name": "id",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "attId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [],
@@ -251,6 +308,12 @@ export const talosEscrowAbi = [
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
+      },
+      {
+        "name": "evalId",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
       }
     ],
     "anonymous": false
@@ -313,6 +376,37 @@ export const talosEscrowAbi = [
   },
   {
     "type": "event",
+    "name": "Settled",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "attId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "score",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "passed",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "SettlerUpdated",
     "inputs": [
       {
@@ -347,6 +441,11 @@ export const talosEscrowAbi = [
   },
   {
     "type": "error",
+    "name": "EvalMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotOwner",
     "inputs": []
   },
@@ -370,6 +469,11 @@ export const talosEscrowAbi = [
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "UnknownEval",
+    "inputs": []
   },
   {
     "type": "error",

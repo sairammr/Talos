@@ -1,12 +1,19 @@
-// Seller agent — an x402 HTTP server that delivers a compute job for payment.
-// Modes per dealId:
-//   honest  → computes the correct output (critic will approve → release)
-//   fraud   → returns a wrong output (critic re-run mismatches → refund)
-// The fraud mode is what makes the failure demo real (PRD §7, §8).
+// Seller agent — a STANDALONE x402 HTTP service that delivers work for payment. It is a
+// separate process from the buyer/keeper (run `pnpm seller`); the buyer reaches it over HTTP.
+//
+// The delivery shape depends on the deal's eval. Per-deal modes let the demo drive graded
+// outcomes:
+//   honest        → correct delivery (eval passes → release)
+//   fraud         → tampered reproduction output (eval scores 0 → refund)
+//   degrade:<k>   → fieldMatch delivery with k wrong fields (graded pass or fail by threshold)
+//   badsig        → signature delivery signed by the wrong key (eval scores 0 → refund)
 import { createServer } from "node:http";
 import { verifyTypedData, keccak256, stringToHex, type Address, type Hex } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { config } from "../config.js";
-import { compute, checksumOf, type JobSpec, type Delivery } from "../job.js";
+import { compute, checksumOf, type ReproInput } from "../evaluators/reproduction.js";
+import { computeFields, type FieldInput } from "../evaluators/fieldMatch.js";
+import type { SignatureInput } from "../evaluators/signature.js";
 import {
   transferAuthTypedData,
   X402_FEE,
@@ -16,18 +23,22 @@ import {
 import { accounts, addresses, wallet, usdcAbi, waitReceipt, fmtUsdc } from "../chain.js";
 import { log } from "../logger.js";
 
-// Split a 65-byte hex signature into r/s/v for the onchain EIP-3009 call.
+// The named oracle for the `signature` eval. The seller signs honest deliveries with this key;
+// the eval's input carries ORACLE_ADDRESS as the required signer. (Anvil account #9.)
+export const ORACLE_KEY = "0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6" as const;
+export const ORACLE_ADDRESS = privateKeyToAccount(ORACLE_KEY).address;
+const WRONG_KEY = "0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba" as const;
+
 function splitSig(sig: Hex): { r: Hex; s: Hex; v: number } {
   const raw = sig.slice(2);
-  return {
-    r: `0x${raw.slice(0, 64)}`,
-    s: `0x${raw.slice(64, 128)}`,
-    v: parseInt(raw.slice(128, 130), 16),
-  };
+  return { r: `0x${raw.slice(0, 64)}`, s: `0x${raw.slice(64, 128)}`, v: parseInt(raw.slice(128, 130), 16) };
 }
 
-// Deals the seller has been told to cheat on (set by the demo via /mode).
-const fraudulent = new Set<string>();
+interface Mode {
+  mode: "honest" | "fraud" | "degrade" | "badsig";
+  param?: number;
+}
+const modes = new Map<string, Mode>();
 
 function readBody(req: import("node:http").IncomingMessage): Promise<string> {
   return new Promise((resolve) => {
@@ -37,12 +48,29 @@ function readBody(req: import("node:http").IncomingMessage): Promise<string> {
   });
 }
 
-function makeDelivery(spec: JobSpec, dealId: string): Delivery {
-  const honest = compute(spec);
-  if (!fraudulent.has(dealId)) return honest;
-  // Fraud: tamper the result but keep a plausible-looking (wrong) checksum.
-  const badResult = honest.result.map((n, i) => (i === 0 ? n + 1 : n));
-  return { result: badResult, checksum: checksumOf(spec.transform, badResult) };
+async function makeDelivery(evalName: string, input: unknown, m: Mode): Promise<unknown> {
+  switch (evalName) {
+    case "reproduction": {
+      const honest = compute(input as ReproInput);
+      if (m.mode !== "fraud") return honest;
+      const badResult = honest.result.map((n, i) => (i === 0 ? n + 1 : n));
+      return { result: badResult, checksum: checksumOf((input as ReproInput).transform, badResult) };
+    }
+    case "fieldMatch": {
+      const honest = computeFields(input as FieldInput);
+      if (m.mode !== "degrade") return honest;
+      const k = m.param ?? 0;
+      return { result: honest.result.map((n, i) => (i < k ? n + 1 : n)) };
+    }
+    case "signature": {
+      const message = (input as SignatureInput).message;
+      const key = m.mode === "badsig" ? WRONG_KEY : ORACLE_KEY;
+      const signature = await privateKeyToAccount(key).signMessage({ message });
+      return { signature };
+    }
+    default:
+      throw new Error(`seller: unknown eval ${evalName}`);
+  }
 }
 
 export function startSeller(): Promise<() => void> {
@@ -55,25 +83,29 @@ export function startSeller(): Promise<() => void> {
       res.end(JSON.stringify(body));
     };
 
+    if (req.method === "GET" && req.url === "/health") {
+      return json(200, { ok: true, agent: "seller", address: seller });
+    }
+
     if (req.method === "POST" && req.url === "/mode") {
-      const { dealId, mode } = JSON.parse(await readBody(req));
-      if (mode === "fraud") fraudulent.add(dealId);
-      else fraudulent.delete(dealId);
+      const { dealId, mode, param } = JSON.parse(await readBody(req));
+      modes.set(dealId, { mode, param });
       return json(200, { ok: true });
     }
 
     if (req.method === "POST" && req.url === "/deliver") {
-      const { dealId, spec } = JSON.parse(await readBody(req)) as { dealId: string; spec: JobSpec };
+      const { dealId, evalName, input } = JSON.parse(await readBody(req)) as {
+        dealId: string;
+        evalName: string;
+        input: unknown;
+      };
       const payHeader = req.headers["x-payment"] as string | undefined;
 
-      // Amount is a function of the job (kept simple: fixed per-deal in the demo).
       const requirements: PaymentRequirements = {
         scheme: "exact",
         network: config.chainId === 84532 ? "base-sepolia" : "anvil-local",
         asset: usdc,
         payTo: seller,
-        // Small delivery-access fee, SEPARATE from the escrowed job value (no double-pay,
-        // PRD §6a). This is the real x402 leg that lands onchain / indexes on x402scan.
         maxAmountRequired: X402_FEE.toString(),
         resource: dealId,
         nonce: keccak256(stringToHex(`x402:${dealId}`)),
@@ -81,12 +113,10 @@ export function startSeller(): Promise<() => void> {
       };
 
       if (!payHeader) {
-        // x402: no payment → 402 with requirements.
         res.setHeader("www-authenticate", "x402");
         return json(402, requirements);
       }
 
-      // Verify the EIP-3009 authorization signature (the x402 payment proof).
       let auth: X402Authorization;
       try {
         auth = JSON.parse(Buffer.from(payHeader, "base64").toString("utf8"));
@@ -103,19 +133,13 @@ export function startSeller(): Promise<() => void> {
         chainId: auth.chainId,
         verifyingContract: auth.verifyingContract as Address,
       });
-      const valid = await verifyTypedData({
-        address: auth.from,
-        ...typed,
-        signature: auth.signature,
-      });
+      const valid = await verifyTypedData({ address: auth.from, ...typed, signature: auth.signature });
       if (!valid || auth.to.toLowerCase() !== seller.toLowerCase()) {
         return json(402, { error: "invalid x402 payment authorization" });
       }
 
-      // SETTLE the x402 payment onchain — the seller acts as the facilitator/relayer and
-      // lands the buyer's signed EIP-3009 authorization. Real USDC moves buyer→seller; the
-      // buyer never needed ETH (gasless, exactly like a real x402 facilitator). On Base
-      // Sepolia this tx indexes on x402scan.
+      // Settle the x402 payment onchain (seller relays the buyer's EIP-3009 authorization —
+      // real USDC moves buyer→seller, buyer gasless). On Base Sepolia this indexes on x402scan.
       const { r, s, v } = splitSig(auth.signature);
       const sellerWallet = wallet(config.sellerKey);
       let x402Tx: `0x${string}` | undefined;
@@ -124,28 +148,24 @@ export function startSeller(): Promise<() => void> {
           address: usdc,
           abi: usdcAbi,
           functionName: "transferWithAuthorization",
-          args: [
-            auth.from,
-            auth.to,
-            BigInt(auth.value),
-            BigInt(auth.validAfter),
-            BigInt(auth.validBefore),
-            auth.nonce,
-            v,
-            r,
-            s,
-          ],
+          args: [auth.from, auth.to, BigInt(auth.value), BigInt(auth.validAfter), BigInt(auth.validBefore), auth.nonce, v, r, s],
         });
         await waitReceipt(x402Tx);
       } catch (e) {
         return json(402, { error: `x402 settlement failed: ${String(e)}` });
       }
 
-      const delivery = makeDelivery(spec, dealId);
-      const cheating = fraudulent.has(dealId);
+      const m = modes.get(dealId) ?? { mode: "honest" as const };
+      const delivery = await makeDelivery(evalName, input, m);
+      const tag =
+        m.mode === "honest"
+          ? "[honest]"
+          : m.mode === "degrade"
+            ? `\x1b[33m[degraded: ${m.param} bad fields]\x1b[0m`
+            : `\x1b[31m[${m.mode}]\x1b[0m`;
       log.seller(
-        `x402 paid delivery for ${dealId.slice(0, 10)}… fee ${fmtUsdc(X402_FEE)} settled ` +
-          `\x1b[2mtx ${x402Tx.slice(0, 12)}…\x1b[0m ${cheating ? "\x1b[31m[FRAUD: tampered output]\x1b[0m" : "[honest]"}`
+        `x402 paid delivery for ${dealId.slice(0, 10)}… (${evalName}) fee ${fmtUsdc(X402_FEE)} settled ` +
+          `\x1b[2mtx ${x402Tx.slice(0, 12)}…\x1b[0m ${tag}`
       );
       return json(200, { delivery, x402Tx });
     }
@@ -161,7 +181,7 @@ export function startSeller(): Promise<() => void> {
   });
 }
 
-// Allow `pnpm seller` to run it standalone.
+// `pnpm seller` runs it standalone (its own process — the two-agent split).
 if (import.meta.url === `file://${process.argv[1]}`) {
-  startSeller();
+  startSeller().then(() => log.seller("seller agent running; ctrl-c to stop"));
 }

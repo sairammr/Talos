@@ -10,7 +10,6 @@
 // would settle on x402scan.
 import { type Address } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import type { JobSpec, Delivery } from "../job.js";
 
 // x402 delivery-access fee: 0.10 USDC (6 dp). Deliberately small and SEPARATE from the
 // escrowed job value so there is no double-pay (PRD §6a) — this is the real, explorer-
@@ -80,22 +79,25 @@ export function transferAuthTypedData(auth: {
   };
 }
 
-// Buyer-side: request delivery over x402, paying with a signed authorization.
+// Buyer-side: request delivery over x402, paying with a signed authorization. The delivery
+// shape depends on the deal's eval, so it's returned as `unknown` and handed to the evaluator.
 export async function requestDelivery(opts: {
   sellerUrl: string;
   dealId: `0x${string}`;
-  spec: JobSpec;
+  evalName: string;
+  input: unknown;
   buyerKey: `0x${string}`;
   usdc: Address;
   chainId: number;
-}): Promise<{ delivery: Delivery; x402: X402Authorization; x402Tx?: `0x${string}` }> {
+}): Promise<{ delivery: unknown; x402: X402Authorization; x402Tx?: `0x${string}` }> {
   const account = privateKeyToAccount(opts.buyerKey);
+  const deliverBody = JSON.stringify({ dealId: opts.dealId, evalName: opts.evalName, input: opts.input });
 
   // 1) Unpaid probe → expect 402 with requirements.
   const probe = await fetch(`${opts.sellerUrl}/deliver`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ dealId: opts.dealId, spec: opts.spec }),
+    body: deliverBody,
   });
   if (probe.status !== 402) {
     throw new Error(`x402: expected 402 on unpaid probe, got ${probe.status}`);
@@ -135,11 +137,11 @@ export async function requestDelivery(opts: {
       "content-type": "application/json",
       "x-payment": Buffer.from(JSON.stringify(auth)).toString("base64"),
     },
-    body: JSON.stringify({ dealId: opts.dealId, spec: opts.spec }),
+    body: deliverBody,
   });
   if (paid.status !== 200) {
     throw new Error(`x402: paid request failed ${paid.status}: ${await paid.text()}`);
   }
-  const body = (await paid.json()) as { delivery: Delivery; x402Tx?: `0x${string}` };
+  const body = (await paid.json()) as { delivery: unknown; x402Tx?: `0x${string}` };
   return { delivery: body.delivery, x402: auth, x402Tx: body.x402Tx };
 }

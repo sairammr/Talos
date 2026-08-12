@@ -62,15 +62,28 @@ export const config = {
   deployFile: resolve(__dirname, "..", ".deploy.json"),
 };
 
-export function loadDeployment(): { escrow: `0x${string}`; usdc: `0x${string}` } {
-  if (config.escrowAddress && config.usdcAddress) {
-    return { escrow: config.escrowAddress, usdc: config.usdcAddress };
+export interface Deployment {
+  escrow: `0x${string}`;
+  usdc: `0x${string}`;
+  evalRegistry: `0x${string}`;
+  attestationRegistry: `0x${string}`;
+}
+
+export function loadDeployment(): Deployment {
+  const env = {
+    escrow: process.env.ESCROW_ADDRESS,
+    usdc: process.env.USDC_ADDRESS,
+    evalRegistry: process.env.EVAL_REGISTRY_ADDRESS,
+    attestationRegistry: process.env.ATTESTATION_REGISTRY_ADDRESS,
+  };
+  if (env.escrow && env.usdc && env.evalRegistry && env.attestationRegistry) {
+    return env as Deployment;
   }
   if (!existsSync(config.deployFile)) {
     throw new Error(
-      `No deployment found. Run the deploy step first (see run.sh) or set ESCROW_ADDRESS/USDC_ADDRESS.`
+      `No deployment found. Run the deploy step first (see run.sh) or set the *_ADDRESS env vars.`
     );
   }
   const d = JSON.parse(readFileSync(config.deployFile, "utf8"));
-  return { escrow: d.escrow, usdc: d.usdc };
+  return { escrow: d.escrow, usdc: d.usdc, evalRegistry: d.evalRegistry, attestationRegistry: d.attestationRegistry };
 }

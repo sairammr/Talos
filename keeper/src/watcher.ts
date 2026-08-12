@@ -1,30 +1,28 @@
-// Settlement keeper watcher loop (PRD §6, §7). Idempotent at TWO layers:
+// Settlement keeper watcher loop. Idempotent at TWO layers:
 //   - local status flag (releasing/refunding) prevents re-entry inside the loop
 //   - re-reads the on-chain deal status immediately before actuating (no stale trigger)
-// The contract's terminal-status guard is the final backstop — even a buggy keeper
-// cannot double-settle.
+// The contract's terminal-status guard is the final backstop — even a buggy keeper cannot
+// double-settle.
+//
+// The verdict path is now eval → attest → settle: the keeper posts a graded attestation onchain
+// (producing an attId), then submits a settle intent here; the watcher actuates
+// escrow.settle(dealId, attId) and the contract decides release vs refund from the attested
+// score. The deadline path is a permissionless refund (autonomous KeeperHub workflow on testnet).
 import { type Hash } from "viem";
 import { readDeal, isExpired } from "./chain.js";
 import { store } from "./store.js";
-import { settle } from "./keeperhub.js";
-import type { Verdict } from "./verifier.js";
+import { settleVerdict, refundDeadline, type VerdictSettleRequest } from "./keeperhub.js";
 import { log } from "./logger.js";
 
-// Verdicts the keeper has computed off-chain (critic approved/rejected a delivery).
-// Modeling "keeper posts a webhook to the workflow on critic verdict".
-const pendingVerdicts = new Map<string, Verdict>();
+// Settle intents the keeper has computed + attested (attId is already onchain).
+const pendingSettles = new Map<string, VerdictSettleRequest>();
 
-export function submitVerdict(dealId: Hash, verdict: Verdict) {
-  pendingVerdicts.set(dealId, verdict);
+export function submitSettle(req: VerdictSettleRequest) {
+  pendingSettles.set(req.dealId, req);
 }
 
 // Settle exactly once, re-reading chain state first (idempotency guard).
-async function settleGuarded(
-  dealId: Hash,
-  trigger: "webhook-verdict" | "block-interval-deadline",
-  verdict: "approved" | "rejected" | "expired",
-  evidence?: Record<string, unknown>
-) {
+async function settleGuarded(dealId: Hash, kind: "verdict" | "deadline"): Promise<void> {
   const rec = store.get(dealId);
   if (!rec) return;
   if (rec.status === "releasing" || rec.status === "refunding") return; // in-flight
@@ -37,15 +35,27 @@ async function settleGuarded(
     return;
   }
 
-  const action = verdict === "approved" ? "release" : "refund";
-  store.setStatus(dealId, action === "release" ? "releasing" : "refunding");
-  try {
-    const row = await settle({ dealId, trigger, verdict, evidence });
-    store.setStatus(dealId, action === "release" ? "released" : "refunded", row.txHash);
-  } catch (e) {
-    // Revert local status so a later tick retries.
-    store.setStatus(dealId, "held");
-    log.keeper(`\x1b[31msettle failed for ${dealId.slice(0, 10)}…, will retry: ${String(e)}\x1b[0m`);
+  if (kind === "verdict") {
+    const req = pendingSettles.get(dealId);
+    if (!req) return;
+    pendingSettles.delete(dealId);
+    store.setStatus(dealId, req.passed ? "releasing" : "refunding");
+    try {
+      const row = await settleVerdict(req);
+      store.setStatus(dealId, req.passed ? "released" : "refunded", row.txHash);
+    } catch (e) {
+      store.setStatus(dealId, "held"); // revert so a later tick retries
+      log.keeper(`\x1b[31msettle failed for ${dealId.slice(0, 10)}…, will retry: ${String(e)}\x1b[0m`);
+    }
+  } else {
+    store.setStatus(dealId, "refunding");
+    try {
+      const row = await refundDeadline(dealId, { note: "decided from onchain escrow.isExpired(dealId)" });
+      store.setStatus(dealId, "refunded", row.txHash);
+    } catch (e) {
+      store.setStatus(dealId, "held");
+      log.keeper(`\x1b[31mdeadline refund failed for ${dealId.slice(0, 10)}…, will retry: ${String(e)}\x1b[0m`);
+    }
   }
 }
 
@@ -56,37 +66,28 @@ export async function tick(): Promise<number> {
     if (rec.status !== "held") continue;
     const dealId = rec.dealId;
 
-    // 1) Release/refund on critic verdict (webhook trigger).
-    const v = pendingVerdicts.get(dealId);
-    if (v) {
-      pendingVerdicts.delete(dealId);
-      if (v.approved) {
-        log.keeper(`verdict APPROVED for ${dealId.slice(0, 10)}… → trigger release workflow`);
-        await settleGuarded(dealId, "webhook-verdict", "approved", v.evidence);
-      } else {
-        log.keeper(`verdict REJECTED for ${dealId.slice(0, 10)}… → trigger refund workflow`);
-        await settleGuarded(dealId, "webhook-verdict", "rejected", v.evidence);
-      }
+    // 1) Settle on an attested verdict (webhook trigger → settle(dealId, attId)).
+    if (pendingSettles.has(dealId)) {
+      const req = pendingSettles.get(dealId)!;
+      log.keeper(
+        `verdict ${req.passed ? "PASS" : "FAIL"} (${(req.score / 100).toFixed(0)}%) for ${dealId.slice(0, 10)}… → settle(att ${req.attId.slice(0, 10)}…)`
+      );
+      await settleGuarded(dealId, "verdict");
       fired++;
       continue;
     }
 
-    // 2) Autonomous deadline refund (block-interval trigger, decided from onchain state
-    //    with ZERO keeper input — the honest centerpiece of "KeeperHub acts", PRD §3a).
+    // 2) Autonomous deadline refund (block-interval trigger, ZERO keeper verdict).
     if (await isExpired(dealId)) {
-      log.keeper(
-        `${dealId.slice(0, 10)}… past deadline → autonomous block-interval refund (no verdict needed)`
-      );
-      await settleGuarded(dealId, "block-interval-deadline", "expired", {
-        note: "decided from onchain escrow.isExpired(dealId)",
-      });
+      log.keeper(`${dealId.slice(0, 10)}… past deadline → autonomous block-interval refund (no verdict needed)`);
+      await settleGuarded(dealId, "deadline");
       fired++;
     }
   }
   return fired;
 }
 
-// Continuous loop mode (for `runLoop`), used outside the scripted demo.
+// Continuous loop mode (used outside the scripted demo).
 export async function runLoop(pollMs: number, until?: () => boolean) {
   log.keeper(`watcher loop started (poll ${pollMs}ms)`);
   // eslint-disable-next-line no-constant-condition

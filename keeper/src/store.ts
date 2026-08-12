@@ -3,7 +3,6 @@
 // so a decision is independently checkable even without the KeeperHub UI.
 import { readFileSync, writeFileSync, existsSync, appendFileSync } from "node:fs";
 import { config } from "./config.js";
-import type { JobSpec } from "./job.js";
 
 export type LocalStatus = "held" | "releasing" | "released" | "refunding" | "refunded";
 
@@ -13,8 +12,13 @@ export interface DealRecord {
   seller: `0x${string}`;
   amount: string; // stringified bigint
   deadline: number; // unix seconds
-  spec: JobSpec; // the agreed deterministic job
+  evalName: string; // which eval gates this deal
+  evalId: `0x${string}`;
+  input: unknown; // the agreed eval input (reproducibility reference)
   status: LocalStatus;
+  score?: number; // basis points, once graded
+  attId?: `0x${string}`;
+  deliverableHash?: `0x${string}`;
   lockTx?: `0x${string}`;
   settleTx?: `0x${string}`;
   createdAt: number;
@@ -53,6 +57,13 @@ export const store = {
     if (settleTx) d.settleTx = settleTx;
     write(s);
   },
+  patch(dealId: string, fields: Partial<DealRecord>) {
+    const s = read();
+    const d = s.deals[dealId];
+    if (!d) return;
+    Object.assign(d, fields);
+    write(s);
+  },
   reset() {
     write({ deals: {} });
   },
@@ -65,6 +76,9 @@ export interface AuditRow {
   verdict: "approved" | "rejected" | "expired";
   action: "release" | "refund";
   actuator: "keeperhub-workflow" | "settler-fallback";
+  evalName?: string; // which eval graded the delivery
+  score?: number; // basis points
+  attId?: `0x${string}`; // the onchain attestation the settle read
   txHash?: `0x${string}`;
   gasUsed?: string;
   evidence?: Record<string, unknown>;

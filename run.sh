@@ -36,20 +36,22 @@ echo "▶ deploying TalosEscrow + MockUSDC…"
 pushd contracts >/dev/null
 DEPLOY_OUT=$(PRIVATE_KEY="$DEPLOYER_KEY" SETTLER="$SETTLER_ADDR" ${USDC_ADDRESS:+USDC_ADDRESS=$USDC_ADDRESS} \
   forge script script/Deploy.s.sol:Deploy --rpc-url "$RPC_URL" --broadcast 2>&1)
-echo "$DEPLOY_OUT" | grep -E "TalosEscrow:|USDC:|Settler:" || true
+echo "$DEPLOY_OUT" | grep -E "EvalRegistry:|AttestationRegistry:|TalosEscrow:|USDC:|Settler:" || true
 ESCROW=$(echo "$DEPLOY_OUT" | grep "TalosEscrow:" | awk '{print $NF}')
 USDC=$(echo "$DEPLOY_OUT" | grep -E "^\s*USDC:" | awk '{print $NF}')
+EVALREG=$(echo "$DEPLOY_OUT" | grep "EvalRegistry:" | awk '{print $NF}')
+ATTREG=$(echo "$DEPLOY_OUT" | grep "AttestationRegistry:" | awk '{print $NF}')
 popd >/dev/null
 
-if [ -z "$ESCROW" ] || [ -z "$USDC" ]; then
+if [ -z "$ESCROW" ] || [ -z "$USDC" ] || [ -z "$EVALREG" ] || [ -z "$ATTREG" ]; then
   echo "✗ deploy failed to yield addresses"; echo "$DEPLOY_OUT"; exit 1
 fi
 
 # 3. Record deployment for the keeper.
 cat > keeper/.deploy.json <<EOF
-{ "escrow": "$ESCROW", "usdc": "$USDC", "chainId": $CHAIN_ID }
+{ "escrow": "$ESCROW", "usdc": "$USDC", "evalRegistry": "$EVALREG", "attestationRegistry": "$ATTREG", "chainId": $CHAIN_ID }
 EOF
-echo "▶ deployment: escrow=$ESCROW usdc=$USDC"
+echo "▶ deployment: escrow=$ESCROW usdc=$USDC evalRegistry=$EVALREG attestationRegistry=$ATTREG"
 
 # 3b. If a KeeperHub Turnkey signer is set, make it the escrow settler so the
 #     workflow's Web3 Action can move held funds (real KeeperHub actuation path).
@@ -59,12 +61,24 @@ if [ -n "${KEEPERHUB_SIGNER:-}" ]; then
     --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL" >/dev/null && echo "  ✓ settler set"
 fi
 
-# 4. Run the keeper demo.
-echo "▶ running keeper demo…"
+# 4. Start the seller as its OWN process (two-agent split), then run the buyer/keeper demo.
 cd keeper
-RPC_URL="$RPC_URL" CHAIN_ID="$CHAIN_ID" ESCROW_ADDRESS="$ESCROW" USDC_ADDRESS="$USDC" \
-  npx tsx src/demo.ts
+export RPC_URL CHAIN_ID
+export ESCROW_ADDRESS="$ESCROW" USDC_ADDRESS="$USDC" EVAL_REGISTRY_ADDRESS="$EVALREG" ATTESTATION_REGISTRY_ADDRESS="$ATTREG"
+
+echo "▶ starting seller agent (separate process)…"
+npx tsx src/agents/seller.ts &
+SELLER_PID=$!
+cleanup_all() { cleanup; [ -n "${SELLER_PID:-}" ] && kill "$SELLER_PID" 2>/dev/null || true; }
+trap cleanup_all EXIT
+# wait for the seller's /health
+for _ in $(seq 1 30); do
+  curl -sf "http://127.0.0.1:${SELLER_PORT:-4021}/health" >/dev/null 2>&1 && break
+  sleep 0.3
+done
+
+echo "▶ running buyer/keeper demo…"
+npx tsx src/demo.ts
 
 echo "▶ audit view:"
-RPC_URL="$RPC_URL" CHAIN_ID="$CHAIN_ID" ESCROW_ADDRESS="$ESCROW" USDC_ADDRESS="$USDC" \
-  npx tsx src/cli.ts audit
+npx tsx src/cli.ts audit

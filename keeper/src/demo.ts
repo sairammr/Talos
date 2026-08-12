@@ -1,24 +1,27 @@
-// End-to-end demo (PRD §8). Runs the whole lifecycle against a live chain:
-//   - N happy-path deals: lock → x402 delivery → critic reproduces → release
-//   - 1 fraud deal:       lock → tampered delivery → critic rejects → refund
-//   - 1 expiry deal:      lock → no delivery → autonomous block-interval refund
-// Every leg is a real onchain tx. Prints an audit summary + balances at the end.
-import { startSeller } from "./agents/seller.js";
-import { fundBuyer, lockDeal, dealIdOf } from "./agents/buyer.js";
+// End-to-end demo of the eval layer. Every leg is a real onchain lifecycle:
+//   register evals → lock(evalId) → x402 delivery → evaluate → attest → settle(dealId, attId)
+// The escrow decides release vs refund from the ONCHAIN attested score vs the eval threshold.
+//
+//   1. reproduction, full-correct   → score 10000            → release
+//   2. fieldMatch, 97% correct      → score 9700  >= 9500    → release (graded pass)
+//   3. fieldMatch, 90% correct      → score 9000  <  9500    → refund  (graded fail — money shot)
+//   4. reproduction, tampered       → score 0                → refund  (fraud)
+//   5. expiry, no delivery          → autonomous block-interval refund
+//   + reputation read from onchain Attested events
+import { startSeller, ORACLE_ADDRESS } from "./agents/seller.js";
+import { fundBuyer, lockDeal } from "./agents/buyer.js";
 import { requestDelivery } from "./adapters/x402Delivery.js";
-import { checkCondition } from "./verifier.js";
-import { submitVerdict, tick } from "./watcher.js";
+import { ensureEvalsRegistered, evaluateAndAttest } from "./attest.js";
+import { submitSettle, tick } from "./watcher.js";
 import { store, audit } from "./store.js";
-import { accounts, addresses, usdcBalance, fmtUsdc, readDeal } from "./chain.js";
+import { accounts, addresses, usdcBalance, fmtUsdc, readDeal, readAttestations } from "./chain.js";
 import { config } from "./config.js";
-import type { JobSpec } from "./job.js";
+import { reproduction, fieldMatch, evalIdFor } from "./evaluators/registry.js";
+import type { Evaluator } from "./evaluators/types.js";
 import { log, color } from "./logger.js";
 
-// Per-deal escrow value. Default 10 USDC locally; set DEAL_USDC (whole USDC) smaller on
-// testnet so one faucet pull covers the whole run.
 const AMOUNT = BigInt(Math.round(Number(process.env.DEAL_USDC ?? 10) * 1e6));
 
-// Advance local-anvil time deterministically; on a real testnet, blocks mine on their own.
 async function advanceTime(secs: number) {
   if (config.chainId !== 31337) {
     await new Promise((r) => setTimeout(r, (secs + 1) * 1000));
@@ -36,80 +39,105 @@ async function advanceTime(secs: number) {
   });
 }
 
-function spec(seed: number): JobSpec {
-  return { transform: "sortSum", inputs: [seed * 7, seed * 3 + 1, seed, seed * 11 - 2, 42] };
-}
+const reproInput = (seed: number) => ({ transform: "sortSum" as const, inputs: [seed * 7, seed * 3 + 1, seed, seed * 11 - 2, 42] });
+const fieldInput = () => ({ transform: "perFieldSquare" as const, inputs: Array.from({ length: 100 }, (_, i) => i + 1) });
 
-// Run one deal through lock → x402 → critic → settle. `fraud` flips the seller.
-async function runDeal(nonce: string, fraud: boolean) {
-  const s = spec(Number(nonce.replace(/\D/g, "")) || 1);
-  const { dealId } = await lockDeal({ nonce, amount: AMOUNT, deadlineSecs: 600, spec: s });
+// Set the seller's delivery mode for a deal, then run one full lifecycle leg.
+async function runDeal(opts: {
+  nonce: string;
+  evaluator: Evaluator;
+  input: unknown;
+  mode: { mode: "honest" | "fraud" | "degrade" | "badsig"; param?: number };
+}) {
+  const { dealId } = await lockDeal({
+    nonce: opts.nonce,
+    amount: AMOUNT,
+    deadlineSecs: 600,
+    evalId: evalIdFor(opts.evaluator),
+    evalName: opts.evaluator.name,
+    input: opts.input,
+  });
 
-  if (fraud) {
-    await fetch(`${config.sellerUrl}/mode`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ dealId, mode: "fraud" }),
-    });
-  }
+  await fetch(`${config.sellerUrl}/mode`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ dealId, mode: opts.mode.mode, param: opts.mode.param }),
+  });
 
-  // Seller delivers over x402 (buyer pays with a signed EIP-3009 authorization that the
-  // seller settles onchain — a real USDC transfer, buyer gasless).
   const { usdc } = addresses();
   const { delivery, x402Tx } = await requestDelivery({
     sellerUrl: config.sellerUrl,
     dealId,
-    spec: s,
+    evalName: opts.evaluator.name,
+    input: opts.input,
     buyerKey: config.buyerKey,
     usdc,
     chainId: config.chainId,
   });
-  if (x402Tx && config.chainId === 84532) {
-    log.info(`x402 payment onchain → https://x402scan.com  (tx ${x402Tx})`);
-  }
+  if (x402Tx && config.chainId === 84532) log.info(`x402 payment onchain → https://x402scan.com  (tx ${x402Tx})`);
 
-  // Independent critic re-runs the transform and byte-compares.
-  const verdict = checkCondition(s, delivery);
-  if (verdict.approved) log.critic(`${dealId.slice(0, 10)}… ${color.green}APPROVED${color.reset} — ${verdict.reason}`);
-  else log.critic(`${dealId.slice(0, 10)}… ${color.red}REJECTED${color.reset} — ${verdict.reason}`);
+  // Evaluate (graded) + attest the verdict onchain.
+  const { verdict, attId, passed } = await evaluateAndAttest(opts.evaluator, opts.input, delivery);
+  const grade = passed ? color.green : color.red;
+  log.critic(
+    `${dealId.slice(0, 10)}… ${opts.evaluator.name} → ${grade}${(verdict.score / 100).toFixed(0)}%${color.reset} ` +
+      `(${verdict.reason})  ${grade}${passed ? "PASS" : "FAIL"}${color.reset}  attested ${attId.slice(0, 10)}…`
+  );
+  store.patch(dealId, { score: verdict.score, attId, deliverableHash: verdict.deliverableHash });
 
-  submitVerdict(dealId, verdict);
-  await tick(); // keeper actuates via KeeperHub
+  submitSettle({ dealId, attId, score: verdict.score, passed, evalName: opts.evaluator.name, evidence: verdict.evidence });
+  await tick(); // keeper actuates settle(dealId, attId) via KeeperHub; contract decides
 }
 
 async function main() {
   store.reset();
   audit.reset();
 
-  log.banner("Talos — Conditional Settlement Keeper");
-  const { escrow, usdc } = addresses();
+  log.banner("Talos — the eval layer for the agent economy");
+  const { escrow, usdc, evalRegistry, attestationRegistry } = addresses();
   log.info(`chain ${config.chainId} · escrow ${escrow} · usdc ${usdc}`);
+  log.info(`evalRegistry ${evalRegistry} · attestationRegistry ${attestationRegistry}`);
   log.info(`settler (KeeperHub signer) ${accounts.settler.address}`);
 
-  const stopSeller = await startSeller();
-  await fundBuyer(AMOUNT * 6n);
+  // Seller runs as its own process (run.sh starts it). Fall back to in-process if unreachable
+  // so `pnpm demo` works standalone.
+  let stopSeller: (() => void) | null = null;
+  const reachable = await fetch(`${config.sellerUrl}/health`).then((r) => r.ok).catch(() => false);
+  if (reachable) log.info(`seller agent reachable at ${config.sellerUrl} (separate process)`);
+  else {
+    log.info(`seller not reachable — starting in-process`);
+    stopSeller = await startSeller();
+  }
 
+  log.banner("Register evals onchain");
+  await ensureEvalsRegistered();
+
+  await fundBuyer(AMOUNT * 6n);
   const buyer0 = await usdcBalance(accounts.buyer.address);
   const seller0 = await usdcBalance(accounts.seller.address);
 
-  // --- Happy path loop (stream of real txs) ---
-  log.banner("Happy path — 3 verified deals settle to the seller");
-  for (const i of [1, 2, 3]) {
-    await runDeal(`happy-${i}`, false);
-  }
+  log.banner("reproduction — full-correct delivery reproduces → release");
+  await runDeal({ nonce: "repro-ok-1", evaluator: reproduction, input: reproInput(1), mode: { mode: "honest" } });
 
-  // --- Fraud case (critic rejection → refund) ---
-  log.banner("Fraud case — tampered delivery, critic rejects, funds refunded");
-  await runDeal(`fraud-9`, true);
+  log.banner("fieldMatch — 97% correct clears the 95% bar → release (graded pass)");
+  await runDeal({ nonce: "field-pass-2", evaluator: fieldMatch, input: fieldInput(), mode: { mode: "degrade", param: 3 } });
 
-  // --- Autonomous deadline refund (block-interval, zero keeper verdict) ---
+  log.banner("fieldMatch — 90% correct misses the 95% bar → refund (the eval-layer money shot)");
+  await runDeal({ nonce: "field-fail-3", evaluator: fieldMatch, input: fieldInput(), mode: { mode: "degrade", param: 10 } });
+
+  log.banner("reproduction — tampered delivery scores 0 → refund (fraud)");
+  await runDeal({ nonce: "repro-fraud-4", evaluator: reproduction, input: reproInput(4), mode: { mode: "fraud" } });
+
   log.banner("Autonomous refund — deal expires, KeeperHub refunds from onchain state");
-  const s = spec(5);
-  // Local anvil can mine instantly, so a 2s deadline is safe. On a real testnet the lock tx
-  // takes a few seconds to mine, so the deadline must clear that latency yet still expire
-  // within the demo — otherwise lock() reverts BadDeadline.
   const expireSecs = config.chainId === 31337 ? 2 : 30;
-  await lockDeal({ nonce: "expire-5", amount: AMOUNT, deadlineSecs: expireSecs, spec: s });
+  await lockDeal({
+    nonce: "expire-5",
+    amount: AMOUNT,
+    deadlineSecs: expireSecs,
+    evalId: evalIdFor(reproduction),
+    evalName: reproduction.name,
+    input: reproInput(5),
+  });
   log.info("no delivery arrives; advancing past the deadline…");
   await advanceTime(expireSecs + 3);
   await tick(); // watcher sees isExpired() → autonomous refund
@@ -118,11 +146,11 @@ async function main() {
   log.banner("Settlement summary");
   for (const rec of store.all()) {
     const d = await readDeal(rec.dealId);
-    const tag =
-      rec.status === "released" ? `${color.green}RELEASED${color.reset}` : `${color.yellow}REFUNDED${color.reset}`;
+    const tag = rec.status === "released" ? `${color.green}RELEASED${color.reset}` : `${color.yellow}REFUNDED${color.reset}`;
+    const score = rec.score !== undefined ? `${(rec.score / 100).toFixed(0)}%` : "—";
     console.log(
-      `  ${rec.dealId.slice(0, 12)}…  ${tag}  ${fmtUsdc(BigInt(rec.amount))}  ` +
-        `onchain=${d.status}  ${color.dim}settle tx ${rec.settleTx?.slice(0, 14) ?? "—"}…${color.reset}`
+      `  ${rec.dealId.slice(0, 12)}…  ${tag}  ${fmtUsdc(BigInt(rec.amount))}  eval=${rec.evalName.padEnd(12)} ` +
+        `score=${score.padEnd(5)} onchain=${d.status}  ${color.dim}settle ${rec.settleTx?.slice(0, 12) ?? "—"}…${color.reset}`
     );
   }
 
@@ -131,21 +159,45 @@ async function main() {
   log.banner("Balances");
   console.log(`  buyer  Δ ${fmtUsdc(buyer1 - buyer0)}`);
   console.log(
-    `  seller Δ ${fmtUsdc(seller1 - seller0)}   ${color.dim}(3 escrow releases = ${fmtUsdc(AMOUNT * 3n)} + 4 x402 delivery fees = 0.40 USDC)${color.reset}`
+    `  seller Δ ${fmtUsdc(seller1 - seller0)}   ${color.dim}(2 releases = ${fmtUsdc(AMOUNT * 2n)} + 5 x402 delivery fees = 0.50 USDC)${color.reset}`
   );
+
+  // --- Reputation from onchain Attested events ---
+  log.banner("Reputation (from onchain Attested events)");
+  const atts = await readAttestations();
+  const bySeller = new Map<string, { n: number; sum: number; pass: number }>();
+  const dealByDeliverable = new Map<string, { seller: string; passed: boolean }>();
+  for (const rec of store.all()) {
+    if (rec.deliverableHash) dealByDeliverable.set(rec.deliverableHash.toLowerCase(), { seller: rec.seller, passed: rec.status === "released" });
+  }
+  for (const a of atts) {
+    const d = dealByDeliverable.get(a.deliverableHash.toLowerCase());
+    const seller = d?.seller ?? a.evaluator;
+    const agg = bySeller.get(seller) ?? { n: 0, sum: 0, pass: 0 };
+    agg.n++;
+    agg.sum += a.score;
+    if (d?.passed) agg.pass++;
+    bySeller.set(seller, agg);
+  }
+  for (const [seller, agg] of bySeller) {
+    console.log(
+      `  ${seller.slice(0, 12)}…  ${agg.n} attestations · mean score ${(agg.sum / agg.n / 100).toFixed(1)}% · ${agg.pass}/${agg.n} passed`
+    );
+  }
 
   const rows = audit.all();
   const released = rows.filter((r) => r.action === "release" && r.outcome === "settled").length;
   const refunded = rows.filter((r) => r.action === "refund" && r.outcome === "settled").length;
   log.banner("Audit trail");
-  console.log(
-    `  ${rows.length} settlement rows · ${color.green}${released} released${color.reset} · ${color.yellow}${refunded} refunded${color.reset}`
-  );
+  console.log(`  ${rows.length} settlement rows · ${color.green}${released} released${color.reset} · ${color.yellow}${refunded} refunded${color.reset}`);
   console.log(`  ${color.dim}full trail: keeper/.audit.jsonl  ·  view: pnpm audit${color.reset}\n`);
 
-  stopSeller();
+  if (stopSeller) stopSeller();
   process.exit(0);
 }
+
+// Silence unused-import warning for ORACLE_ADDRESS (used by the signature eval path/tests).
+void ORACLE_ADDRESS;
 
 main().catch((e) => {
   console.error(e);
