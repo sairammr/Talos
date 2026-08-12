@@ -1,0 +1,23 @@
+{
+  "name": "talos-keeper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Talos settlement keeper — conditional escrow watcher, deterministic verifier, KeeperHub actuation.",
+  "scripts": {
+    "seller": "tsx src/agents/seller.ts",
+    "demo": "tsx src/demo.ts",
+    "audit": "tsx src/cli.ts audit",
+    "deals": "tsx src/cli.ts deals",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/*.test.ts"
+  },
+  "dependencies": {
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "@types/node": "^22.5.0"
+  }
+}
