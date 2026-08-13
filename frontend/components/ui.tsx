@@ -15,8 +15,8 @@ export function Panel({
 }) {
   return (
     <div
-      className={`relative rounded-2xl border border-line bg-panel/70 backdrop-blur-sm p-5 sm:p-6 ${
-        glow ? "glow-cyan" : ""
+      className={`relative rounded-[2px] border border-line bg-panel p-5 sm:p-6 ${
+        glow ? "border-l-[3px] border-l-[color:var(--link)]" : ""
       } ${className}`}
     >
       {children}
@@ -46,13 +46,12 @@ export function Button({
   ...rest
 }: BtnProps) {
   const base =
-    "inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition disabled:opacity-45 disabled:cursor-not-allowed";
+    "inline-flex items-center justify-center gap-2 rounded-[2px] px-3 py-1.5 text-sm font-medium transition disabled:opacity-45 disabled:cursor-not-allowed";
   const styles = {
     primary:
-      "bg-cyan text-[#04181d] hover:brightness-110 shadow-[0_0_24px_-6px_rgba(53,224,255,0.6)]",
-    ghost:
-      "border border-line-strong text-text hover:border-cyan hover:text-cyan bg-transparent",
-    danger: "bg-red text-[#210606] hover:brightness-110",
+      "bg-cyan text-white border border-[color:var(--link)] hover:bg-[#2a4b8d] hover:border-[#2a4b8d]",
+    ghost: "border border-line text-cyan bg-white hover:bg-[#eaf3ff]",
+    danger: "bg-red text-white border border-[color:var(--red)] hover:brightness-110",
   }[variant];
   return (
     <button
@@ -94,7 +93,7 @@ export function Input(
   const { mono, className = "", ...rest } = props;
   return (
     <input
-      className={`w-full rounded-xl border border-line bg-bg2/80 px-3.5 py-2.5 text-sm text-text placeholder:text-faint outline-none transition focus:border-cyan focus:ring-1 focus:ring-cyan/40 ${
+      className={`w-full rounded-[2px] border border-line bg-bg2 px-2.5 py-2 text-sm text-text placeholder:text-faint outline-none transition focus:border-cyan focus:ring-1 focus:ring-cyan/30 ${
         mono ? "font-mono" : ""
       } ${className}`}
       {...rest}
@@ -149,12 +148,12 @@ export function Copy({ text, label = "copy" }: { text: string; label?: string })
 
 export function CodeBlock({ code, filename }: { code: string; filename?: string }) {
   return (
-    <div className="rounded-xl border border-line bg-bg2/80 overflow-hidden">
-      <div className="flex items-center justify-between border-b border-line px-3.5 py-2">
+    <div className="rounded-[2px] border border-line bg-box overflow-hidden">
+      <div className="flex items-center justify-between border-b border-line bg-header px-3.5 py-2">
         <span className="font-mono text-[11px] text-faint">{filename ?? "snippet"}</span>
         <Copy text={code} />
       </div>
-      <pre className="overflow-x-auto px-3.5 py-3 text-[12.5px] leading-relaxed font-mono text-text/90">
+      <pre className="overflow-x-auto px-3.5 py-3 text-[12.5px] leading-relaxed font-mono text-text">
         <code>{code}</code>
       </pre>
     </div>

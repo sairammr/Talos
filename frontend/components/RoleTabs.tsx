@@ -18,10 +18,10 @@ export function RoleTabs({ role, onChange }: { role: Role; onChange: (r: Role) =
           <button
             key={r.id}
             onClick={() => onChange(r.id)}
-            className={`rounded-xl border px-3.5 py-3 text-left transition ${
+            className={`rounded-[2px] border px-3.5 py-3 text-left transition ${
               active
-                ? "border-cyan bg-cyan/10 glow-cyan"
-                : "border-line bg-panel/40 hover:border-cyan/50"
+                ? "border-cyan border-b-[3px] bg-white"
+                : "border-line bg-box hover:bg-white"
             }`}
           >
             <span className="flex items-center gap-2">

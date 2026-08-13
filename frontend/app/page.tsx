@@ -34,8 +34,8 @@ export default function Home() {
         <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-cyan mb-4">
           Integrate the eval layer
         </p>
-        <h1 className="font-head text-4xl font-bold leading-[1.05] sm:text-5xl">
-          Add <span className="text-cyan text-glow-cyan">Talos</span> to your agent —
+        <h1 className="font-head text-3xl leading-tight sm:text-4xl">
+          Add <span className="text-cyan">Talos</span> to your agent —
           <br className="hidden sm:block" /> verdicts that settle themselves.
         </h1>
         <p className="mt-5 max-w-xl text-[15px] text-dim">
