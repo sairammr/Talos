@@ -18,12 +18,6 @@ Built for the KeeperHub **"Agents Onchain"** hackathon (DoraHacks).
 [Lifecycle](#the-eval-lifecycle) · [Contracts](contracts/README.md) ·
 [Testnet runbook](TESTNET.md) · [Live tx trail](docs/keeperhub-testnet-results.md)
 
-![Talos eval-layer console — live Base Sepolia settlements](docs/media/talos-dashboard-demo.gif)
-
-> The console (`web/dashboard.html`) makes the whole eval → attest → settle flow legible at a
-> glance: score-vs-threshold meters, the 90% < 95% graded-refund money shot, and every settle
-> linking to basescan.
-
 ---
 
 ## The one-liner that survives a hostile judge
@@ -51,6 +45,47 @@ refunds — **decided by the contract from the onchain score**.
 The release condition is onchain-checkable (attestation exists + `evalId` matches + `score ≥
 threshold`), not a keeper's bare bool. **The contract picks the branch, not the keeper.**
 
+## Architecture
+
+Four roles talk to three onchain objects; KeeperHub actuates a proven verdict, but the **escrow
+decides** from the onchain score vs the onchain threshold.
+
+```mermaid
+flowchart TB
+  subgraph off["Off-chain"]
+    A["Eval author"]
+    B["Buyer agent"]
+    S["Seller agent"]
+    EV["Keeper · Evaluator SDK<br/>evaluate() → score + evidence"]
+    KH["KeeperHub<br/>webhook → settle() · block-interval → refund()"]
+  end
+
+  subgraph chain["Onchain — Base Sepolia"]
+    ER["EvalRegistry<br/>reproducible evals · codeHash · threshold(bp)"]
+    AR["AttestationRegistry<br/>attest(evalId, deliverableHash, inputHash, score, evidenceHash)"]
+    ES["TalosEscrow (a consumer)<br/>settle(): score ≥ threshold ? release : refund"]
+  end
+
+  A -->|"register eval (1 tx)"| ER
+  B -->|"lock USDC · names evalId"| ES
+  S -->|"deliver over x402 (EIP-3009)"| EV
+  EV -->|"post score"| AR
+  EV -->|"proven verdict"| KH
+  KH -->|"settle(dealId, attId)"| ES
+  KH -.->|"isExpired → refund (autonomous)"| ES
+  ER -. "threshold" .-> ES
+  AR -. "score + evidence" .-> ES
+  ES -->|"release → Seller  /  refund → Buyer"| B
+```
+
+- **EvalRegistry** pins each eval's `evaluatorCodeHash` + `threshold`, so a verdict is reproducible.
+- **AttestationRegistry** is the onchain ledger of graded verdicts; reputation reads off `Attested` events.
+- **TalosEscrow** is just a *consumer* — it reads the attestation and settles from `score ≥ threshold`.
+- **KeeperHub** actuates (`settle` webhook) and refunds expired deals autonomously (block-interval) —
+  it never decides who gets paid.
+
+For the request/pay sequence view, see [The eval lifecycle](#the-eval-lifecycle) below.
+
 ## Deployed contracts — Base Sepolia (chainId 84532)
 
 Live, verifiable stack. Evals (`reproduction`, `fieldMatch`, `signature`) are already registered
@@ -77,8 +112,7 @@ refund is genuinely autonomous** — a KeeperHub Block-Interval workflow reads `
 from onchain state and refunds with *zero keeper input*. That autonomous branch is the honest
 centerpiece of "KeeperHub acts."
 
-## Run it (zero credentials)
-
+## Run it 
 Requires [Foundry](https://getfoundry.sh) (`anvil`, `forge`) and Node ≥ 20 + `pnpm`.
 
 ```bash
