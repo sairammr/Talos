@@ -63,6 +63,8 @@ cd keeper && pnpm install && cd ..
 ./run.sh
 ```
 
+![./run.sh — local anvil, deploy, 5-leg eval lifecycle, every leg onchain](docs/media/talos-run-demo.gif)
+
 `run.sh` spins a local `anvil`, deploys the eval-layer stack + a `MockUSDC` faucet, starts the
 **seller as its own agent process**, and runs the full lifecycle — **every leg a real onchain tx**:
 
