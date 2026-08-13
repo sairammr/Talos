@@ -20,9 +20,13 @@ onchain attested score.
 - **talos-settle** `9z8xaukywmqwsyfb0kzqo` — Webhook `{dealId, attId}` → Web3 write
   `settle(bytes32 dealId, bytes32 attId)`. The escrow reads the attestation and releases iff
   `score ≥ threshold`, else refunds. **Enabled.** Auth: `Authorization: Bearer wfb_…`.
-- **talos-refund-deadline** `e6g38hlw0ykql3u6leont` — Block-interval → `read isExpired` →
-  Condition → `refund`. Autonomous (no keeper input). (Demo's expiry leg used the keeper's
-  permissionless-refund fallback; the standalone autonomous workflow was proven in an earlier run.)
+- **talos-refund-deadline** `e6g38hlw0ykql3u6leont` — Block-interval trigger → Web3 read
+  `isExpired(dealId)` → Condition `== true` → Web3 write `refund(dealId)`, all on the eval-layer
+  escrow. **Genuinely autonomous — no keeper input.** A dedicated deal was locked and expired;
+  the block trigger caught it on its own and refunded:
+  `0x19071baf79ee42d2bf7479768a5033b3ec5379f7e78c172a71165e0844a13ec2` (verified onchain,
+  `receiptStatus: success`, `triggerSource: block`). Later ticks correctly no-op'd (deal already
+  refunded → condition false).
 
 ## Settlements (every tx verified onchain, `receiptStatus: success`, `sponsored: true`)
 
@@ -35,7 +39,7 @@ The keeper graded each delivery, posted the score to AttestationRegistry, then K
 | field-pass | fieldMatch | 9700 ≥ 9500 | release (graded pass) | `0x95f01ea4c44c5340c5f2d9645585462962923ba8536ea81203f3daf43d18141f` |
 | field-fail | fieldMatch | 9000 < 9500 | refund (graded fail) | `0xd1d526d07cab7416c5c93e6c40548c3d0d5780f21027dbaf8b139bbe32f8ba5a` |
 | repro-fraud | reproduction | 0 | refund (fraud) | `0xc9e288fcb73205d88a1de3839a19d3e30330a5178e1974a76e89a7677060b20d` |
-| expire | reproduction | — | autonomous deadline refund | `0x87c31a872c…` (keeper permissionless refund) |
+| expire | reproduction | — | autonomous deadline refund | `0x19071baf79ee42d2bf7479768a5033b3ec5379f7e78c172a71165e0844a13ec2` (Workflow B, block-interval) |
 
 The graded-fail row (9000 < 9500 → refund) is the eval-layer money shot: a 90%-correct delivery
 is refunded, decided entirely from the onchain score vs the onchain threshold.
