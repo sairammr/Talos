@@ -46,6 +46,24 @@ refunds — **decided by the contract from the onchain score**.
 The release condition is onchain-checkable (attestation exists + `evalId` matches + `score ≥
 threshold`), not a keeper's bare bool. **The contract picks the branch, not the keeper.**
 
+## Deployed contracts — Base Sepolia (chainId 84532)
+
+Live, verifiable stack. Evals (`reproduction`, `fieldMatch`, `signature`) are already registered
+onchain on the `EvalRegistry` below.
+
+| Contract | Address | Explorer |
+|---|---|---|
+| `EvalRegistry` | `0xDD8076334e66d5041DFe3Ab9C14Ee2E1ED4dfb47` | [basescan](https://sepolia.basescan.org/address/0xDD8076334e66d5041DFe3Ab9C14Ee2E1ED4dfb47) |
+| `AttestationRegistry` | `0x8C672E44452F4e6522Fe47c63c3bD29e818335e8` | [basescan](https://sepolia.basescan.org/address/0x8C672E44452F4e6522Fe47c63c3bD29e818335e8) |
+| `TalosEscrow` (consumer) | `0xC6b6Baa7A80ec471e81F0680BC599A3041410719` | [basescan](https://sepolia.basescan.org/address/0xC6b6Baa7A80ec471e81F0680BC599A3041410719) |
+| USDC (Circle, EIP-3009) | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` | [basescan](https://sepolia.basescan.org/address/0x036CbD53842c5426634e7929541eC2318f3dCF7e) |
+| Escrow settler | `0x7d08B1E51C9172dDd55A277e86d54a3Cd9733BF4` | KeeperHub Turnkey signer (gas sponsored) |
+
+KeeperHub workflows pointed at the escrow: **`talos-settle`** (webhook → `settle(dealId, attId)`)
+and **`talos-refund-deadline`** (block-interval → `isExpired` → `refund`, autonomous). Live tx
+links: [`docs/keeperhub-testnet-results.md`](./docs/keeperhub-testnet-results.md). Contract source
+and interfaces: [`contracts/README.md`](./contracts/README.md).
+
 ## Where KeeperHub fits (thinks vs acts, honestly)
 
 The graded verdict is computed off-chain (reproducibility can't be onchain), so KeeperHub
