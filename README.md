@@ -50,33 +50,7 @@ threshold`), not a keeper's bare bool. **The contract picks the branch, not the 
 Four roles talk to three onchain objects; KeeperHub actuates a proven verdict, but the **escrow
 decides** from the onchain score vs the onchain threshold.
 
-```mermaid
-flowchart TB
-  subgraph off["Off-chain"]
-    A["Eval author"]
-    B["Buyer agent"]
-    S["Seller agent"]
-    EV["Keeper · Evaluator SDK<br/>evaluate() → score + evidence"]
-    KH["KeeperHub<br/>webhook → settle() · block-interval → refund()"]
-  end
-
-  subgraph chain["Onchain — Base Sepolia"]
-    ER["EvalRegistry<br/>reproducible evals · codeHash · threshold(bp)"]
-    AR["AttestationRegistry<br/>attest(evalId, deliverableHash, inputHash, score, evidenceHash)"]
-    ES["TalosEscrow (a consumer)<br/>settle(): score ≥ threshold ? release : refund"]
-  end
-
-  A -->|"register eval (1 tx)"| ER
-  B -->|"lock USDC · names evalId"| ES
-  S -->|"deliver over x402 (EIP-3009)"| EV
-  EV -->|"post score"| AR
-  EV -->|"proven verdict"| KH
-  KH -->|"settle(dealId, attId)"| ES
-  KH -.->|"isExpired → refund (autonomous)"| ES
-  ER -. "threshold" .-> ES
-  AR -. "score + evidence" .-> ES
-  ES -->|"release → Seller  /  refund → Buyer"| B
-```
+![Talos architecture — roles, off-chain keeper, KeeperHub actuation, and the onchain eval-layer stack on Base Sepolia](docs/media/architecture.png)
 
 - **EvalRegistry** pins each eval's `evaluatorCodeHash` + `threshold`, so a verdict is reproducible.
 - **AttestationRegistry** is the onchain ledger of graded verdicts; reputation reads off `Attested` events.
