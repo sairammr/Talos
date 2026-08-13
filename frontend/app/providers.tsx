@@ -19,7 +19,11 @@ export function Providers({ children }: { children: ReactNode }) {
         defaultChain: baseSepolia,
         supportedChains: [baseSepolia],
         // Give newcomers a wallet automatically — anyone can transact.
-        embeddedWallets: { ethereum: { createOnLogin: "users-without-wallets" } },
+        // showWalletUIs:false → embedded wallet signs without a per-tx popup (smooth demo).
+        embeddedWallets: {
+          ethereum: { createOnLogin: "users-without-wallets" },
+          showWalletUIs: false,
+        },
         loginMethods: ["wallet", "email", "google"],
         appearance: {
           theme: "light",

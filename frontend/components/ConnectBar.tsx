@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import { useAccount, useChainId, useSwitchChain, useBalance } from "wagmi";
 import { CHAIN } from "@/lib/talos";
@@ -9,6 +10,11 @@ import { Button } from "./ui";
 export function ConnectBar() {
   const { ready, authenticated, login, logout } = usePrivy();
   const { address, isConnected } = useAccount();
+
+  // Expose the connected address for the scripted demo (harmless; read-only).
+  useEffect(() => {
+    (window as unknown as { __talosAddress?: string }).__talosAddress = address;
+  }, [address]);
   const chainId = useChainId();
   const { switchChain, isPending: switching } = useSwitchChain();
   const { data: bal } = useBalance({

@@ -77,6 +77,7 @@ export function TestDeal({ evalId, evalName }: { evalId: Hex | null; evalName: s
     if (!evalId) return;
     const id = randomDealId();
     setDealId(id);
+    (window as unknown as { __lastDealId?: string }).__lastDealId = id;
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600); // +1h
     lockW.writeContract({
       address: ADDR.escrow as Hex,
