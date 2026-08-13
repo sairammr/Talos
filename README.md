@@ -63,7 +63,12 @@ cd keeper && pnpm install && cd ..
 ./run.sh
 ```
 
-![./run.sh — local anvil, deploy, 5-leg eval lifecycle, every leg onchain](docs/media/talos-run-demo.gif)
+![The eval lifecycle on real Base Sepolia — x402 deliveries, KeeperHub settle webhooks, autonomous refund](docs/media/talos-run-demo.gif)
+
+> Above: the full lifecycle on **real Base Sepolia** — every x402 delivery links to x402scan, every
+> verdict settles through the KeeperHub `settle(dealId, attId)` webhook, and the expiry leg refunds
+> autonomously. `./run.sh` runs the identical flow locally (zero credentials); `./run.sh --testnet`
+> and [`TESTNET.md`](./TESTNET.md) run it on Base Sepolia.
 
 `run.sh` spins a local `anvil`, deploys the eval-layer stack + a `MockUSDC` faucet, starts the
 **seller as its own agent process**, and runs the full lifecycle — **every leg a real onchain tx**:
