@@ -1,0 +1,123 @@
+@import "tailwindcss";
+
+/* ── Talos video aesthetic — Hermes (dark/electric) × Talos (amber/terminal) ── */
+:root {
+  --bg: #0a0c0b;
+  --bg2: #0e1210;
+  --panel: rgba(20, 26, 24, 0.72);
+  --panel-solid: #121715;
+  --line: rgba(120, 150, 140, 0.16);
+  --line-strong: rgba(140, 180, 165, 0.3);
+  --text: #e9f0ec;
+  --text-dim: #8fa39b;
+  --text-faint: #5c6d66;
+  --cyan: #35e0ff;
+  --cyan-dim: #1c7f92;
+  --amber: #e9b949;
+  --bronze: #c8933a;
+  --green: #35d07f;
+  --green-glow: rgba(53, 208, 127, 0.35);
+  --red: #ff5c5c;
+  --red-glow: rgba(255, 92, 92, 0.32);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg2: var(--bg2);
+  --color-panel: var(--panel-solid);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-text: var(--text);
+  --color-dim: var(--text-dim);
+  --color-faint: var(--text-faint);
+  --color-cyan: var(--cyan);
+  --color-amber: var(--amber);
+  --color-bronze: var(--bronze);
+  --color-green: var(--green);
+  --color-red: var(--red);
+  --font-head: "Space Grotesk", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+html {
+  -webkit-text-size-adjust: 100%;
+}
+body {
+  margin: 0;
+  min-height: 100%;
+  background:
+    radial-gradient(900px 500px at 82% -8%, rgba(53, 224, 255, 0.08), transparent 65%),
+    radial-gradient(700px 500px at 10% 110%, rgba(233, 185, 73, 0.06), transparent 60%),
+    var(--bg);
+  color: var(--text);
+  font-family: var(--font-head);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* faint scanline / grid texture behind everything */
+.grid-bg::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(140, 180, 165, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(140, 180, 165, 0.035) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(circle at 50% 30%, black, transparent 85%);
+}
+
+/* glow helpers */
+.glow-cyan {
+  box-shadow: 0 0 0 1px rgba(53, 224, 255, 0.25), 0 0 28px -6px rgba(53, 224, 255, 0.35);
+}
+.text-glow-cyan {
+  text-shadow: 0 0 18px rgba(53, 224, 255, 0.45);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.rise {
+  animation: rise 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes pulse-dot {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.pulse-dot {
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise,
+  .pulse-dot {
+    animation: none;
+  }
+}
+
+::selection {
+  background: rgba(53, 224, 255, 0.28);
+}
