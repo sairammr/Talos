@@ -13,6 +13,11 @@ consumer, not the product.**
 
 Built for the KeeperHub **"Agents Onchain"** hackathon (DoraHacks).
 
+**Jump to:** [Deployed contracts](#deployed-contracts--base-sepolia-chainid-84532) ·
+[Run it (zero creds)](#run-it-zero-credentials) · [Tests](#tests) ·
+[Lifecycle](#the-eval-lifecycle) · [Contracts](contracts/README.md) ·
+[Testnet runbook](TESTNET.md) · [Live tx trail](docs/keeperhub-testnet-results.md)
+
 ![Talos eval-layer console — live Base Sepolia settlements](docs/media/talos-dashboard-demo.gif)
 
 > The console (`web/dashboard.html`) makes the whole eval → attest → settle flow legible at a
@@ -207,4 +212,3 @@ graded evaluator; register→lock→x402→evaluate→attest→settle lifecycle;
 reputation from `Attested` events; two-agent-process demo; live fraud/graded-fail refunds; KeeperHub
 actuation. **Out of scope (schema leaves room):** `Attested`/`Judged` trust tiers, evaluator
 staking/slashing, sandboxed `testExec` evaluator, EAS mirror, deliverable-hash re-delivery nonce.
-```
